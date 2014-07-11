@@ -1,0 +1,12 @@
+[package]
+
+name = "splaytree"
+version = "0.1.0"
+authors = [ "a.beingessner@gmail.com" ]
+
+[dependencies.bst]
+path = "../bst"
+
+[[lib]]
+
+name = "splaytree"

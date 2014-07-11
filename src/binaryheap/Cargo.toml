@@ -1,0 +1,9 @@
+[package]
+
+name = "binaryheap"
+version = "0.1.0"
+authors = [ "a.beingessner@gmail.com" ]
+
+[[lib]]
+
+name = "binaryheap"
