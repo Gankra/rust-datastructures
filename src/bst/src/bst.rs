@@ -84,16 +84,15 @@ impl <K,V> Node<K,V> {
 //
 // If a method on Tree returns a NodeRefToken, it is asserting
 // that dereferencing the token is safe, and the reference will
-// be valid *until* the tree is mutated again. After any
+// be valid at least until the tree is mutated again. After any
 // other mutatation all bets are off, and tokens made before
 // should be discarded. Tokens should never be stored long-term.
 //
 // Methods for unwraping NodeRefToken are on the Tree itself
-// to prevent tokens leaking. The mutability of the reference
-// is tied to the mutability of the tree to prevent mutability
-// escalation. Tokens should self destruct by nulling out their
-// reference. For this reason it is advisable to pass them by mutable
-// reference at all times.
+// to prevent tokens leaking references. The mutability of the 
+// reference is tied to the mutability of the tree to prevent mutability
+// escalation. Tokens self destruct by nulling out their reference when used.
+// Any attempt to derefernce a token again will result in hard failure.
 
 pub struct NodeRefToken<K,V> {
     node: *const Node<K,V>
@@ -107,7 +106,37 @@ impl <K,V> NodeRefToken<K,V> {
 
 // A simple binary search tree, that does nothing to stay balanced.
 // This structure is not intended for direct use, but for extension by
-// other tree-based structures, such as a splay tree or treap
+// other tree-based structures, such as a splay tree or treap. Consequently,
+// much of its internals are made public to allow easy reuse and composition
+// of simple operations. The BST provides sane defaults and utilities 
+// for many operations that an extender should leverage when possible.
+//
+// In contrast to trees found in the std lib, these trees use parent pointers.
+// This of course has a memory, time, and safety overhead. Regardless, 
+// some motivation for this includes:
+//
+// # Familiarity
+// Most tree-based structures and algorithms are designed with parent pointers
+// taken for granted. While many of them can be adapted to avoid parent pointers,
+// it can increase the complexity of the implementation, or force the usage
+// of a more *obscure* design.
+//
+// # Composability
+// With parent pointers, one can easily perform a rotation or other similar
+// operation with only one reference into the tree. Otherwise, we made need
+// to track more values. The NodeRefToken system is built around this principle,
+// at the cost of safety.
+//
+// # Amortization of memory costs
+// While the memory usage of parent pointers significantly increases the cost
+// of storing the tree, having them allows some algorithms, such as traversals,
+// to operate with significantly less working memory (O(1) vs O(n) in the case of
+// traverals). By incuring a small memory overhead per-node, we avoid large memory
+// overheads on operations. This makes memory usage more stable, and avoids
+// costly heap allocations (or explosive stacks) in performance-critical sections.
+// Nodes must be heap allocated regardless of their size, and allocating a slightly
+// largely node should generally be faster than allocating two smaller objects.
+
 pub struct Tree<Key, Value> {
     pub root: NodeRef<Key, Value>,
     pub len: uint,
