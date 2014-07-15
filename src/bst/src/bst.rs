@@ -12,7 +12,7 @@ pub type NodeBackRef<K,V> = *mut Node<K,V>;
 pub struct Node<Key, Value> {
     pub key: Key,
     pub value: Value,
-    pub parent: NodeBackRef<Key, Value>,
+        parent: NodeBackRef<Key, Value>,
     pub left: NodeRef<Key, Value>,
     pub right: NodeRef<Key, Value>,
 }
