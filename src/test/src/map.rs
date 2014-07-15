@@ -85,7 +85,7 @@ pub fn test_find <M: Map<uint, uint> + FromIterator<(uint, uint)>> () {
 // Many maps only do some interesting things when sufficiently large, 
 // or after sufficiently large sequences of operations; let's try!
 pub fn test_integration <M: MutableMap<uint, uint> + Default> () {
-    let mut values = unordered_sequence(2).zip(unordered_sequence(2));
+    let mut values = unordered_sequence::<(uint, uint)>(2);
     let mut map:M = Default::default();
 
     // fill it up
@@ -97,14 +97,14 @@ pub fn test_integration <M: MutableMap<uint, uint> + Default> () {
     }
 
     // ensure search works
-    values = unordered_sequence(2).zip(unordered_sequence(2));
+    values = unordered_sequence(2);
     for (key, value) in values {
         assert_eq!(map.find(&key), Some(&value));
         assert_eq!(map.len(), count);
     }
 
     // ensure remove works
-    let mut reduced_values = unordered_sequence(2).zip(unordered_sequence(2)).take(80).skip(30);
+    let mut reduced_values = unordered_sequence::<(uint, uint)>(2).take(80).skip(30);
     for (key, value) in reduced_values {
         count -= 1;
         assert_eq!(map.pop(&key), Some(value));
@@ -113,7 +113,7 @@ pub fn test_integration <M: MutableMap<uint, uint> + Default> () {
 
     // ensure search still works
     let mut index = 0u;
-    values = unordered_sequence(2).zip(unordered_sequence(2));
+    values = unordered_sequence(2);
     for (key, value) in values {
         if index >= 30 && index < 80{
             assert_eq!(map.find(&key), None);    
@@ -126,7 +126,7 @@ pub fn test_integration <M: MutableMap<uint, uint> + Default> () {
 
     // ensure swap still works
     index = 0;
-    values = unordered_sequence(2).zip(unordered_sequence(2));
+    values = unordered_sequence(2);
     for (key, value) in values {
         if index >= 30 && index < 80{
             assert_eq!(map.swap(key, value), None);  
@@ -140,7 +140,7 @@ pub fn test_integration <M: MutableMap<uint, uint> + Default> () {
 
     // ensure search *still* works
     index = 0;
-    values = unordered_sequence(2).zip(unordered_sequence(2));
+    values = unordered_sequence(2);
     for (key, value) in values {
         if index >= 30 && index < 80{
             assert_eq!(map.find(&key), Some(&value));    
