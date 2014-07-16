@@ -1,9 +1,13 @@
 [package]
 
-name = "splaytree"
+name = "collections"
 version = "0.1.0"
 authors = [ "a.beingessner@gmail.com" ]
 
-[[bin]]
+[[lib]]
 
-name = "splaytree" # the name of the executable to generate
+name = "collections"
+
+[dependencies.coltests]
+
+git = "https://github.com/Gankro/rust-collection-tests.git"

@@ -1,9 +1,0 @@
-[package]
-
-name = "bst"
-version = "0.1.0"
-authors = [ "a.beingessner@gmail.com" ]
-
-[[lib]]
-
-name = "bst"
