@@ -10,4 +10,6 @@ name = "collections"
 
 [dependencies.coltests]
 
-git = "https://github.com/Gankro/rust-collection-tests.git"
+path = "../rust-collection-tests/"
+
+#git = "https://github.com/Gankro/rust-collection-tests.git"

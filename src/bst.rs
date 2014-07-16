@@ -1,5 +1,6 @@
 use std::ptr::RawPtr;
 use std::default::Default;
+use std::mem;
 
 pub type NodeRef<K,V> = Option<Box<Node<K,V>>>;
 pub type NodeBackRef<K,V> = *mut Node<K,V>;
@@ -211,7 +212,7 @@ impl <K: Ord, V> Tree<K,V> {
                 &Some(ref mut nodeRefToken) => {
                     let node = unsafe{self.take_unwrap_token_mut(nodeRefToken)};
                     let mut temp = value;
-                    std::mem::swap(&mut temp, &mut node.value);
+                    mem::swap(&mut temp, &mut node.value);
                     old = Some(temp);
                     
                     Some(NodeRefToken::new(node))
@@ -339,7 +340,7 @@ impl <K: Ord, V> Tree<K,V> {
         }
     }
 
-    fn traverse(&self, f:|&K, &V|, g:|&K, &V|, h:|&K, &V|) {
+    pub fn traverse(&self, f:|&K, &V|, g:|&K, &V|, h:|&K, &V|) {
         enum MoveState {Down, UpFromLeft, UpFromRight};
         match self.root {
             None => return,
@@ -394,15 +395,15 @@ impl <K: Ord, V> Tree<K,V> {
         }
     }
 
-    fn preorder_traversal(&self, f:|&K, &V|){
+    pub fn preorder_traversal(&self, f:|&K, &V|){
         self.traverse(f, |_,_|(), |_,_|());
     }
 
-    fn inorder_traversal(&self, f:|&K, &V|){
+    pub fn inorder_traversal(&self, f:|&K, &V|){
         self.traverse(|_,_|(), f, |_,_|());
     }
 
-    fn postorder_traversal(&self, f:|&K, &V|){
+    pub fn postorder_traversal(&self, f:|&K, &V|){
         self.traverse(|_,_|(), |_,_|(), f);
     }
     
@@ -502,7 +503,23 @@ impl <K:Ord, V> MutableMap<K,V> for Tree<K,V> {
 #[cfg(test)]
 mod test{
     use super::{Tree};
+    use coltests::collection;
+    use coltests::map;
 
+    type ToTest = Tree<uint, uint>;
+    
+    use_test!(empty, collection::test_empty::<ToTest>())
+    use_test!(clear, collection::test_clear::<ToTest, _>())
+    use_test!(from_iter, collection::test_from_iter::<ToTest, _>())
+    use_test!(extend, collection::test_extend::<ToTest, _>())
+    use_test!(insert, map::test_insert::<ToTest>())
+    use_test!(swap, map::test_swap::<ToTest>())
+    use_test!(remove, map::test_remove::<ToTest>())
+    use_test!(pop, map::test_pop::<ToTest>())
+    use_test!(contains, map::test_contains::<ToTest>())
+    use_test!(find, map::test_find::<ToTest>())
+    use_test!(find_mut, map::test_find_mut::<ToTest>())
+    use_test!(integration, map::test_integration::<ToTest>())
 
     #[test]
     fn test_inorder_traversal(){

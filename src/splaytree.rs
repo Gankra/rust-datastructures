@@ -1,5 +1,3 @@
-extern crate bst;
-
 use bst::{Tree, NodeRefToken};
 use std::default::Default;
 use std::fmt::Show;
@@ -17,20 +15,20 @@ use std::fmt::Show;
 //
 // Note that as a consequence, splay trees can become *very* unbalanced, and
 // individual searches may take O(n).
-struct SplayTree<K,V> {
+pub struct SplayTree<K,V> {
 	tree: Tree<K,V>
 }
 
 impl <K:Ord, V> SplayTree <K, V> {
-	fn new () -> SplayTree<K,V> {
+	pub fn new () -> SplayTree<K,V> {
 		SplayTree{tree: Tree::new()}
 	}
 
-    fn find <'a> (&'a mut self, key: &K) -> Option<&'a V> {
+    pub fn find <'a> (&'a mut self, key: &K) -> Option<&'a V> {
         self.find_mut(key).map(|x| &*x)
     }
 
-	fn contains (&mut self, key: &K) -> bool {
+	pub fn contains (&mut self, key: &K) -> bool {
         self.find(key).is_some()
     }
 
@@ -66,7 +64,7 @@ impl <K:Ord, V> SplayTree <K, V> {
         }
     }
 
-    fn find_mut <'a> (&'a mut self, key: &K) -> Option<&'a mut V> {
+    pub fn find_mut <'a> (&'a mut self, key: &K) -> Option<&'a mut V> {
         let (mut parentToken, mut nodeToken) = self.tree.find_internal(key);
         match &mut nodeToken {
             &None => match &mut parentToken {
@@ -83,11 +81,11 @@ impl <K:Ord, V> SplayTree <K, V> {
         }
     }
 
-    fn insert (&mut self, key: K, value: V) -> bool {
+    pub fn insert (&mut self, key: K, value: V) -> bool {
         self.swap(key, value).is_none()
     }
 
-    fn swap (&mut self, key: K, value: V) -> Option<V> {
+    pub fn swap (&mut self, key: K, value: V) -> Option<V> {
         //splay SplayTrees insert naively and then splay the inserted node
         let (added, mut token) = self.tree.insert_internal(key, value);
         if token.is_some() {
@@ -96,11 +94,11 @@ impl <K:Ord, V> SplayTree <K, V> {
         added
     }
 
-    fn remove (&mut self, key: &K) -> bool {
+    pub fn remove (&mut self, key: &K) -> bool {
         self.pop(key).is_some()
     }
 
-    fn pop (&mut self, key: &K) -> Option<V>{
+    pub fn pop (&mut self, key: &K) -> Option<V>{
         // Splay SplayTrees delete by splaying the node to delete and removing it.
         // Then the largest element in the root's left subtree is splayed,
         // and the right subtree is made the right child of the new root
@@ -163,119 +161,24 @@ impl <K:Ord,V:Show> Default for SplayTree<K,V> {
 
 #[cfg(test)]
 mod test{
-    use super::SplayTree;
+    use super::{SplayTree};
+    use coltests::collection;
+    //use coltests::map;
 
-    #[test]
-    fn find_empty() {
-        let mut m: SplayTree<int,int> = SplayTree::new();
-        assert!(m.find(&5) == None);
-    }
-
-    #[test]
-    fn find_not_found() {
-        let mut m = SplayTree::new();
-        assert!(m.insert(1i, 2i));
-        assert!(m.insert(5i, 3i));
-        assert!(m.insert(9i, 3i));
-        assert_eq!(m.find(&2), None);
-    }
-
-    #[test]
-    fn test_find_mut() {
-        let mut m = SplayTree::new();
-        assert!(m.insert(1i, 12i));
-        assert!(m.insert(2, 8));
-        assert!(m.insert(5, 14));
-        let new = 100;
-        match m.find_mut(&5) {
-          None => fail!(), Some(x) => *x = new
-        }
-        assert_eq!(m.find(&5), Some(&new));
-    }
-
-    #[test]
-    fn insert_replace() {
-        let mut m = SplayTree::new();
-        assert!(m.insert(5i, 2i));
-        assert!(m.insert(2, 9));
-        assert!(!m.insert(2, 11));
-        assert_eq!(m.find(&2).unwrap(), &11);
-    }
-
-    #[test]
-    fn test_remove(){
-        let mut m = SplayTree::new();
-        m.insert(1u, 2u);
-        m.insert(2, 3);
-        m.insert(4, 3);
-        m.insert(5, 3);
-        m.insert(6, 3);
-
-        assert!(m.remove(&2));
-        assert!(!m.remove(&3));
-        assert!(m.remove(&4));
-        assert!(!m.remove(&10));
-        assert!(m.remove(&6));
-    }
+    type ToTest = SplayTree<uint, uint>;
     
-    #[test]
-    fn test_clear() {
-        let mut m = SplayTree::new();
-        m.clear();
-        assert!(m.insert(5i, 11i));
-        assert!(m.insert(12, -3));
-        assert!(m.insert(19, 2));
-        m.clear();
-        assert!(m.find(&5).is_none());
-        assert!(m.find(&12).is_none());
-        assert!(m.find(&19).is_none());
-        assert!(m.is_empty());
-    }
-
-    #[test]
-    fn u8_map() {
-        let mut m = SplayTree::new();
-
-        let k1 = "foo".as_bytes();
-        let k2 = "bar".as_bytes();
-        let v1 = "baz".as_bytes();
-        let v2 = "foobar".as_bytes();
-
-        m.insert(k1.clone(), v1.clone());
-        m.insert(k2.clone(), v2.clone());
-
-        assert_eq!(m.find(&k2), Some(&v2));
-        assert_eq!(m.find(&k1), Some(&v1));
-    }
-
-    #[test]
-    fn test_len() {
-
-        let mut m = SplayTree::new();
-        assert!(m.insert(3i, 6i));
-        assert_eq!(m.len(), 1);
-        assert!(m.insert(0, 0));
-        assert_eq!(m.len(), 2);
-        assert!(m.insert(4, 8));
-        assert_eq!(m.len(), 3);
-        assert!(m.remove(&3));
-        assert_eq!(m.len(), 2);
-        assert!(!m.remove(&5));
-        assert_eq!(m.len(), 2);
-        assert!(m.insert(2, 4));
-        assert_eq!(m.len(), 3);
-        assert!(m.insert(1, 2));
-        assert_eq!(m.len(), 4);
-    }
-
-    #[test]
-    fn test_from_iter() {
-        let xs = [(1i, 1i), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)];
-
-        let mut map: SplayTree<int, int> = xs.iter().map(|&x| x).collect();
-
-        for &(k, v) in xs.iter() {
-            assert_eq!(map.find(&k), Some(&v));
-        }
-    }
+    use_test!(empty, collection::test_empty::<ToTest>())
+    use_test!(clear, collection::test_clear::<ToTest, _>())
+    use_test!(from_iter, collection::test_from_iter::<ToTest, _>())
+    use_test!(extend, collection::test_extend::<ToTest, _>())
+    /*
+    use_test!(insert, map::test_insert::<ToTest>())
+    use_test!(swap, map::test_swap::<ToTest>())
+    use_test!(remove, map::test_remove::<ToTest>())
+    use_test!(pop, map::test_pop::<ToTest>())
+    use_test!(contains, map::test_contains::<ToTest>())
+    use_test!(find, map::test_find::<ToTest>())
+    use_test!(find_mut, map::test_find_mut::<ToTest>())
+    use_test!(integration, map::test_integration::<ToTest>())
+    */
 }

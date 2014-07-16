@@ -1,7 +1,13 @@
+#![feature(phase)]
+
+#[phase(plugin, link)]
 extern crate coltests;
 
+//maps
 pub mod bst;
 pub mod splaytree;
-pub mod binomialheap;
-pub mod pairingheap;
+
+//heaps
 pub mod binaryheap;
+pub mod binomialheap;
+//pub mod pairingheap;
