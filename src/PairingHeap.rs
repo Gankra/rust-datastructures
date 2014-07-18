@@ -1,51 +1,24 @@
 use coltests::priorityqueue::PriorityQueue;
 use std::default::Default;
-
-enum NextRef<T>{
-	Parent(*mut Node<T>),
-	RightSibling(Box<Node<T>>),
-}
+use std::iter::range_step;
 
 struct Node<T> {
 	value: T,
-	leftChild: Option<Box<Node<T>>>,
-	next: Option<NextRef<T>>,
+	children: Vec<Node<T>>
 }
 
 impl <T> Node<T> {
 	fn new(value:T) -> Node<T> {
-		Node{value: value, leftChild:None, next:None }
+		Node{value: value, children: Vec::new() }
 	}
 
-	fn add_child(&mut self, mut node: Box<Node<T>>) {
-		node.next = match self.leftChild.take() {
-			None => Some(Parent(self as *mut _)),
-			Some(child) => Some(RightSibling(child)),
-		};
-		self.leftChild = Some(node);
-	}
-
-	fn take_child(&mut self) -> Option<Box<Node<T>>>{
-		self.leftChild.take()
-	}
-
-	fn take_sibling(&mut self) -> Option<Box<Node<T>>> {
-		match self.next.take() {
-			None => None,
-			parent@Some(Parent(_)) => {
-				self.next = parent;
-				None
-			},
-			Some(RightSibling(mut sibling)) => {
-				self.next = sibling.next.take();
-				Some(sibling)
-			}
-		}
+	fn add_child(&mut self, mut node: Node<T>) {
+		self.children.push(node);
 	}
 }
 
 pub struct PairingHeap <T> {
-	root: Option<Box<Node<T>>>,
+	root: Option<Node<T>>,
 	length: uint,
 }
 
@@ -65,7 +38,7 @@ impl <T: Ord> PriorityQueue <T> for PairingHeap <T> {
 			None => None,
 			Some(mut root) => {
 				self.length -= 1;
-				self.root = merge_all_children(&mut *root);
+				self.root = merge_all_children(&mut root);
 				Some(root.value)
 			}
 		}
@@ -73,7 +46,7 @@ impl <T: Ord> PriorityQueue <T> for PairingHeap <T> {
 
 	fn push(&mut self, value: T) {
 		self.length += 1;
-		let newNode = box Node::new(value);
+		let newNode = Node::new(value);
 		self.root = match self.root.take() {
 			None => Some(newNode),
 			Some(root) => Some(merge(root, newNode)),
@@ -116,7 +89,7 @@ impl <T> Mutable for PairingHeap<T> {
 	}
 }
 
-fn merge <T: Ord> (mut tree1: Box<Node<T>>, mut tree2: Box<Node<T>>) -> Box<Node<T>> {
+fn merge <T: Ord> (mut tree1: Node<T>, mut tree2: Node<T>) -> Node<T> {
 	if tree1.value < tree2.value {
 		tree1.add_child(tree2);
 		tree1
@@ -126,21 +99,27 @@ fn merge <T: Ord> (mut tree1: Box<Node<T>>, mut tree2: Box<Node<T>>) -> Box<Node
 	}
 }
 
-fn merge_all_children <T: Ord> (node: &mut Node<T>) -> Option<Box<Node<T>>>{
-	match node.take_child() {
-		None => None,
-		Some(first_child) => Some(merge_all_siblings(first_child))
-	}
-}
+fn merge_all_children <T: Ord> (node: &mut Node<T>) -> Option<Node<T>>{
+	while node.children.len() > 1 {
+		let mut iter = range(0, node.children.len()).rev();
+		iter.next(); // go back one
+		loop {
+			match iter.next() {
+				None => break,
+				Some(i) => {
+					let len =  node.children.len();
+					node.children.as_mut_slice().swap(i, len - 1);
+					node.children.as_mut_slice().swap(i + 1, len - 2);
+					let a = node.children.pop().unwrap();
+					let b = node.children.pop().unwrap();
+					node.children.push(merge(a, b));
 
-fn merge_all_siblings <T: Ord> (mut first_child: Box<Node<T>>) -> Box<Node<T>> {
-	match first_child.take_sibling() {
-		None => first_child,
-		Some(mut second_child) => match second_child.take_sibling() {
-			None => merge(first_child, second_child),
-			Some(third_child) => merge(merge(first_child, second_child), merge_all_siblings(third_child))
+					if iter.next().is_none() { break; }
+				}
+			}
 		}
 	}
+	node.children.pop()
 }
 
 #[cfg(test)]
