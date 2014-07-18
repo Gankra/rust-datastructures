@@ -137,7 +137,7 @@ fn make_heap<T: Ord>(elements: Vec<T>) -> BinaryHeap<T>{
 }
 
 #[cfg(test)]
-mod test{
+mod test {
     use super::BinaryHeap;
     use coltests::collection;
     use coltests::priorityqueue;
@@ -151,4 +151,16 @@ mod test{
     use_test!(push, priorityqueue::test_push::<ToTest>())
     use_test!(pop, priorityqueue::test_pop::<ToTest>())
     use_test!(peek, priorityqueue::test_peek::<ToTest>())
+}
+
+#[cfg(test)]
+mod bench {
+    use super::BinaryHeap;
+
+    use coltests::collection;
+    use coltests::priorityqueue;
+    use coltests::utils;
+    use test::Bencher;
+
+    bench_priorityqueue!(BinaryHeap<uint>)
 }

@@ -160,7 +160,7 @@ impl <K:Ord,V:Show> Default for SplayTree<K,V> {
 }
 
 #[cfg(test)]
-mod test{
+mod test {
     use super::{SplayTree};
     use coltests::collection;
     //use coltests::map;
@@ -181,4 +181,16 @@ mod test{
     use_test!(find_mut, map::test_find_mut::<ToTest>())
     use_test!(integration, map::test_integration::<ToTest>())
     */
+}
+
+#[cfg(test)]
+mod bench {
+    use coltests::collection;
+    use coltests::utils::ordered_sequence;
+    use test::Bencher;
+
+    #[bench]
+    fn from_iter (bencher: &mut Bencher) {
+        collection::bench_from_iter::<Vec<uint>, _, _>(ordered_sequence::<uint>(2), bencher);
+    }
 }

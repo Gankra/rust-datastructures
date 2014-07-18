@@ -1,5 +1,4 @@
 use coltests::priorityqueue::PriorityQueue;
-use coltests;
 use std::default::Default;
 
 struct Node <T> {
@@ -172,4 +171,16 @@ mod test{
     use_test!(push, priorityqueue::test_push::<ToTest>())
     use_test!(pop, priorityqueue::test_pop::<ToTest>())
     use_test!(peek, priorityqueue::test_peek::<ToTest>())
+}
+
+#[cfg(test)]
+mod bench {
+    use super::BinomialHeap;
+
+    use coltests::collection;
+    use coltests::priorityqueue;
+    use coltests::utils;
+    use test::Bencher;
+
+    bench_priorityqueue!(BinomialHeap<uint>)
 }
