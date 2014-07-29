@@ -4,6 +4,9 @@
 extern crate coltests;
 extern crate test;
 
+//lists
+pub mod singlylinkedlist;
+
 //maps
 pub mod bst;
 pub mod splaytree;

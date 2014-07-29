@@ -9,18 +9,18 @@ impl <T> Node <T> {
     }
 }
 
-struct SinglyLinkedList <T> {
+pub struct SinglyLinkedList <T> {
     front: Option<Box<Node<T>>>,
     back: *mut Node<T>,
     length: uint,
 }
 
 impl <T> SinglyLinkedList <T> {
-    fn new () -> SinglyLinkedList <T> {
+    pub fn new () -> SinglyLinkedList <T> {
         SinglyLinkedList{ front: None, back: RawPtr::null(), len: 0 }
     }
 
-    fn push_back (&mut self, elem T) {
+    pub fn push_back (&mut self, elem T) {
         let new_node = box Node::new(elem);
         match unsafe { self.back.as_option() } {
             None => self.front = new_node,
@@ -30,7 +30,7 @@ impl <T> SinglyLinkedList <T> {
         self.length += 1;
     }
 
-    fn push_front (&mut self, elem T) {
+    pub fn push_front (&mut self, elem T) {
         let new_node = box Node::new(elem);
         new_node.next = self.front.take();
         self.front = new_node;
@@ -40,7 +40,7 @@ impl <T> SinglyLinkedList <T> {
         self.length += 1;
     }
 
-    fn pop_front (&mut self) -> Option<T> {
+    pub fn pop_front (&mut self) -> Option<T> {
         self.length -= 1;
         match self.front.take() {
             None => None,
@@ -54,19 +54,19 @@ impl <T> SinglyLinkedList <T> {
         }
     }
 
-    fn peek_front <'a> (&'a self) -> Option<&'a T> {
+    pub fn peek_front <'a> (&'a self) -> Option<&'a T> {
         self.front.map(|front| &front.elem)
     }
 
-    fn peek_front_mut <'a> (&'a mut self) -> Option<&'a mut T> {
+    pub fn peek_front_mut <'a> (&'a mut self) -> Option<&'a mut T> {
         self.front.map(|front| &mut front.elem)
     }
 
-    fn peek_back <'a> (&'a self) -> Option<&'a T> {
+    pub fn peek_back <'a> (&'a self) -> Option<&'a T> {
         unsafe { self.back.as_option().map(|back| &back.elem) }
     }
 
-    fn peek_back_mut <'a> (&'a mut self) -> Option<&'a mut T> {
+    pub fn peek_back_mut <'a> (&'a mut self) -> Option<&'a mut T> {
         unsafe { self.back.as_option().map(|back| &mut back.elem) }
     }
 }
@@ -79,6 +79,7 @@ impl <T> Collection for SinglyLinkedList <T> {
 
 impl <T> Mutable for SinglyLinkedList <T> {
     fn clear (&mut self) {
+        // don't want to blow the stack with destructors!
         while !self.is_empty() {
             self.pop_front();
         }
