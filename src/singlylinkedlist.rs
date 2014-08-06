@@ -1,3 +1,5 @@
+#![feature(unsafe_destructor)]
+
 struct Node<T> {
     elem: T,
     next: Option<Box<Node<T>>>,
@@ -9,19 +11,16 @@ impl<T> Node<T> {
     }
 }
 
-/// Double-ended DList iterator
 pub struct Items<'a, T> {
-    head: &'a Node<T>,
+    head: Option<&'a Node<T>>,
     nelem: uint,
 }
 
-/// Double-ended mutable DList iterator
 pub struct MutItems<'a, T> {
-    head: &'a mut Node<T>,
-    nelem, uint,
+    head: Option<&'a mut Node<T>>,
+    nelem: uint,
 }
 
-/// DList consuming iterator
 #[deriving(Clone)]
 pub struct MoveItems<T> {
     list: SinglyLinkedList<T>,
@@ -35,26 +34,33 @@ pub struct SinglyLinkedList <T> {
 
 impl <T> SinglyLinkedList <T> {
     pub fn new () -> SinglyLinkedList <T> {
-        SinglyLinkedList{ front: None, back: RawPtr::null(), len: 0 }
+        SinglyLinkedList{ front: None, back: RawPtr::null(), length: 0 }
     }
 
-    pub fn push_back (&mut self, elem T) {
-        let new_node = box Node::new(elem);
-        match unsafe { self.back.as_option() } {
-            None => self.front = new_node,
-            Some(mut back) => back.next = new_node,
+    pub fn push_back (&mut self, elem: T) {
+        let mut new_node = box Node::new(elem);
+        self.back = &mut *new_node as *mut _;
+
+        if self.back.is_null() {
+            self.front = Some(new_node);
+        } else {
+            let back = unsafe { &mut *self.back };
+            back.next = Some(new_node);
         }
-        self.back = &*new_node as *mut _;
+
         self.length += 1;
     }
 
-    pub fn push_front (&mut self, elem T) {
-        let new_node = box Node::new(elem);
-        new_node.next = self.front.take();
-        self.front = new_node;
+    pub fn push_front (&mut self, elem: T) {
+        let mut new_node = box Node::new(elem);
+
         if self.length == 0 {
-            self.back = &*new_node as *mut _;
+            self.back = &mut *new_node as *mut _;
         }
+
+        new_node.next = self.front.take();
+        self.front = Some(new_node);
+
         self.length += 1;
     }
 
@@ -73,27 +79,32 @@ impl <T> SinglyLinkedList <T> {
     }
 
     pub fn peek_front <'a> (&'a self) -> Option<&'a T> {
-        self.front.map(|front| &front.elem)
+        self.front.as_ref().map(|front| &front.elem)
     }
 
     pub fn peek_front_mut <'a> (&'a mut self) -> Option<&'a mut T> {
-        self.front.map(|front| &mut front.elem)
+        self.front.as_mut().map(|front| &mut front.elem)
     }
 
     pub fn peek_back <'a> (&'a self) -> Option<&'a T> {
-        unsafe { self.back.as_option().map(|back| &back.elem) }
+        unsafe { self.back.to_option().map(|back| &back.elem) }
     }
 
     pub fn peek_back_mut <'a> (&'a mut self) -> Option<&'a mut T> {
-        unsafe { self.back.as_option().map(|back| &mut back.elem) }
+        if self.back.is_null() {
+            None
+        } else {
+            unsafe { Some(&mut (*self.back).elem) }
+        }
     }
 
     pub fn iter <'a> (&'a self) -> Items<'a, T> {
-        Items{ head: &self.front }
+        Items{ head: self.front.as_ref().map(|x| &**x), nelem: self.len() }
     }
 
     pub fn mut_iter <'a> (&'a mut self) -> MutItems<'a, T> {
-        MutItems{ head: &mut self.front }
+        let len = self.len();
+        MutItems{ head: self.front.as_mut().map(|x| &mut **x), nelem: len }
     }
 
     pub fn move_iter (self) -> MoveItems<T> {
@@ -116,6 +127,7 @@ impl <T> Mutable for SinglyLinkedList <T> {
     }
 }
 
+#[unsafe_destructor]
 impl <T> Drop for SinglyLinkedList <T> {
     fn drop (&mut self) {
         self.clear();
@@ -124,17 +136,14 @@ impl <T> Drop for SinglyLinkedList <T> {
 
 impl<'a, T> Iterator<&'a T> for Items<'a, T> {
     #[inline]
-    fn next(&self) -> Option<&'a T> {
-        if self.nelem == 0 {
-            None
-        } else {
-            self.nelem -= 1;
-            let result = &self.head.elem;
-            self.head = match self.head.next {
-                Some(box ref next) => next,
-                None => self.head,
+    fn next(&mut self) -> Option<&'a T> {
+        match self.head.take() {
+            None => None,
+            Some(head) => {
+                self.nelem -= 1;
+                self.head = head.next.as_ref().map(|next| &**next);
+                Some(&head.elem)
             }
-            result
         }
     }
 
@@ -149,21 +158,16 @@ impl<'a, T> Clone for Items<'a, T> {
     fn clone(&self) -> Items<'a, T> { *self }
 }
 
-impl<'a, T> ExactSize<&'a mut T> for Items<'a, T> {}
-
 impl<'a, T> Iterator<&'a mut T> for MutItems<'a, T> {
     #[inline]
-    fn next(&self) -> Option<&'a T> {
-        if self.nelem == 0 {
-            None
-        } else {
-            self.nelem -= 1;
-            let result = &mut self.head.elem;
-            self.head = match self.head.next {
-                Some(box ref mut next) => next,
-                None => self.head,
+    fn next(&mut self) -> Option<&'a mut T> {
+        match self.head.take() {
+            None => None,
+            Some(head) => {
+                self.nelem -= 1;
+                self.head = head.next.as_mut().map(|next| &mut **next);
+                Some(&mut head.elem)
             }
-            result
         }
     }
 
@@ -173,11 +177,9 @@ impl<'a, T> Iterator<&'a mut T> for MutItems<'a, T> {
     }
 }
 
-impl<'a, T> ExactSize<&'a mut T> for MutItems<'a, T> {}
-
 impl <T> Iterator<T> for MoveItems<T> {
     #[inline]
-    fn next(&self) -> Option<T> {
+    fn next(&mut self) -> Option<T> {
         self.list.pop_front()
     }
 
@@ -187,8 +189,6 @@ impl <T> Iterator<T> for MoveItems<T> {
         (len, Some(len))
     }
 }
-
-impl<'a, T> ExactSize<&'a mut T> for MoveItems<'a, T> {}
 
 impl<T> FromIterator<T> for SinglyLinkedList<T> {
     fn from_iter<I: Iterator<T>>(iterator: I) -> SinglyLinkedList<T> {
@@ -207,18 +207,18 @@ impl<T> Extendable<T> for SinglyLinkedList<T> {
 impl<T: PartialEq> PartialEq for SinglyLinkedList<T> {
     fn eq(&self, other: &SinglyLinkedList<T>) -> bool {
         self.len() == other.len() &&
-            iter::order::eq(self.iter(), other.iter())
+            std::iter::order::eq(self.iter(), other.iter())
     }
 
     fn ne(&self, other: &SinglyLinkedList<T>) -> bool {
         self.len() != other.len() ||
-            iter::order::ne(self.iter(), other.iter())
+            std::iter::order::ne(self.iter(), other.iter())
     }
 }
 
 impl<T: PartialOrd> PartialOrd for SinglyLinkedList<T> {
     fn partial_cmp(&self, other: &SinglyLinkedList<T>) -> Option<Ordering> {
-        iter::order::partial_cmp(self.iter(), other.iter())
+        std::iter::order::partial_cmp(self.iter(), other.iter())
     }
 }
 
@@ -228,8 +228,8 @@ impl<T: Clone> Clone for SinglyLinkedList<T> {
     }
 }
 
-impl<T: fmt::Show> fmt::Show for SinglyLinkedList<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<T: std::fmt::Show> std::fmt::Show for SinglyLinkedList<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         try!(write!(f, "["));
 
         for (i, e) in self.iter().enumerate() {
@@ -240,3 +240,5 @@ impl<T: fmt::Show> fmt::Show for SinglyLinkedList<T> {
         write!(f, "]")
     }
 }
+
+fn main(){}

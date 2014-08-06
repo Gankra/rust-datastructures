@@ -33,7 +33,7 @@ impl <T> BlockedList<T> {
     }
 
     // TODO intelligently iterate forwards or backwards
-    pub fn get<'a>(&'a self, index: uint) Option<&'a T> {
+    pub fn get<'a>(&'a self, index: uint) -> Option<&'a T> {
         if index >= self.length {
             None
         } else {
@@ -41,7 +41,7 @@ impl <T> BlockedList<T> {
             for block in self.list.iter() {
                 let block_len = block.len();
                 if cur_index + block_len > index {
-                    return block.get(index - cur_index);
+                    return Some(block.get(index - cur_index));
                 } else {
                     cur_index += block_len;
                 }
