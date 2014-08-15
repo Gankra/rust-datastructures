@@ -49,6 +49,40 @@ impl <T> BlockedList<T> {
             unreachable!();
         }
     }
+
+    pub fn get_mut<'a>(&'a mut self, index: uint) -> Option<&'a mut T> {
+        if index >= self.length {
+            None
+        } else {
+            let mut cur_index = 0;
+            for block in self.list.iter() {
+                let block_len = block.len();
+                if cur_index + block_len > index {
+                    return Some(block.get_mut(index - cur_index));
+                } else {
+                    cur_index += block_len;
+                }
+            }
+            unreachable!();
+        }
+    }
+
+    pub fn insert<'a>(&mut self, index: uint, value: T) {
+        if index > self.length { fail!("Index out of bounds"); }
+        
+        let mut cur_index = 0;
+        for block in self.list.iter() {
+            let block_len = block.len();
+            if cur_index + block_len > index {
+                return Some(block.insert(index - cur_index));
+            } else {
+                cur_index += block_len;
+            }
+        }
+
+        unreachable!();
+    }
+
 }
 
 fn make_block <T> (size: uint) -> RingBuf<T> {
@@ -76,12 +110,8 @@ impl <T> Deque <T> for BlockedList<T> {
         self.length += 1;
         let block_size = self.block_size;
         let should_grow = match self.list.front_mut() {
-            None => false,
-            Some(block) => if block.len() == block_size {
-                true
-            } else {
-                false
-            }
+            None => true,
+            Some(block) => block.len() == block_size
         };
 
         if should_grow {
@@ -120,12 +150,8 @@ impl <T> MutableSeq<T> for BlockedList<T> {
         self.length += 1;
         let block_size = self.block_size;
         let should_grow = match self.list.back_mut() {
-            None => false,
-            Some(block) => if block.len() == block_size {
-                true
-            } else {
-                false
-            }
+            None => true,
+            Some(block) => block.len() == block_size 
         };
 
         if should_grow {
