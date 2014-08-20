@@ -111,7 +111,7 @@ impl <T: Ord> SkipList <T> {
         let result_node = {
             let mut cur_stack = &mut self.sentinel;
             let mut cur_height = cur_stack.len() - 1;
-            let mut result_node = None;
+            let mut result_node:Option<Box<Node<T>>> = None;
 
             loop {
                 let next_ptr = (*cur_stack)[cur_height];
@@ -122,7 +122,9 @@ impl <T: Ord> SkipList <T> {
                     match elem.cmp(&next_node.elem) {
                         Equal => {
                             *cur_stack.get_mut(cur_height) = next_node.next.pop().unwrap();
-                            result_node = Some(next_node);
+                            if cur_height == 0 {
+                                result_node = unsafe { Some(transmute(next_ptr)) };
+                            }
                             true
                         }
                         Less => {
