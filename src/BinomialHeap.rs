@@ -69,10 +69,10 @@ impl <T:Ord> BinomialHeap <T> {
 	fn fix_min_index(&mut self) {
 		let mut min_index = -1;
 		for index in range(0, self.trees.len()) {
-			match *self.trees.get(index) {
+			match self.trees[index] {
 				None => {}
 				Some(ref node) => {
-					if min_index == -1 || node.elem < self.trees.get(min_index).as_ref().unwrap().elem {
+					if min_index == -1 || node.elem < self.trees[min_index].as_ref().unwrap().elem {
 						min_index = index;
 					}
 				}
@@ -98,14 +98,14 @@ impl <T:Ord> PriorityQueue <T> for BinomialHeap <T> {
 			self.length -= 1;
 			result
 		}
-		
+
 	}
 
 	fn peek <'a> (&'a self) -> Option<&'a T> {
 		if self.is_empty() {
 			None
 		} else {
-			Some(&self.trees.get(self.min_index).as_ref().unwrap().elem)
+			Some(&self.trees[self.min_index].as_ref().unwrap().elem)
 		}
 	}
 }
@@ -163,7 +163,7 @@ mod test{
     use coltests::priorityqueue;
 
     type ToTest = BinomialHeap<uint>;
-    
+
     use_test!(empty, collection::test_empty::<ToTest>())
     use_test!(clear, collection::test_clear::<ToTest, _>())
     use_test!(from_iter, collection::test_from_iter::<ToTest, _>())

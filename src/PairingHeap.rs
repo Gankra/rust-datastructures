@@ -1,34 +1,36 @@
+
+//! A stupid implementation of a pairing heap, not useful
+
 use coltests::priorityqueue::PriorityQueue;
 use std::default::Default;
-use std::iter::range_step;
 
 struct Node<T> {
 	value: T,
 	children: Vec<Node<T>>
 }
 
-impl <T> Node<T> {
+impl<T> Node<T> {
 	fn new(value:T) -> Node<T> {
 		Node{value: value, children: Vec::new() }
 	}
 
-	fn add_child(&mut self, mut node: Node<T>) {
+	fn add_child(&mut self, node: Node<T>) {
 		self.children.push(node);
 	}
 }
 
-pub struct PairingHeap <T> {
+pub struct PairingHeap<T> {
 	root: Option<Node<T>>,
 	length: uint,
 }
 
-impl <T: Ord> PairingHeap<T> {
+impl<T: Ord> PairingHeap<T> {
 	pub fn new() -> PairingHeap<T> {
 		PairingHeap { root: None, length: 0 }
 	}
 }
 
-impl <T: Ord> PriorityQueue <T> for PairingHeap <T> {
+impl<T: Ord> PriorityQueue<T> for PairingHeap<T> {
 	fn peek <'a> (&'a self) -> Option<&'a T> {
 		self.root.as_ref().map(|node| &node.value)
 	}
@@ -54,19 +56,19 @@ impl <T: Ord> PriorityQueue <T> for PairingHeap <T> {
 	}
 }
 
-impl <T> Collection for PairingHeap <T> {
+impl<T> Collection for PairingHeap<T> {
 	fn len(&self) -> uint {
 		self.length
 	}
 }
 
-impl <T: Ord> Default for PairingHeap <T> {
-	fn default() -> PairingHeap <T> {
+impl<T: Ord> Default for PairingHeap<T> {
+	fn default() -> PairingHeap<T> {
 		PairingHeap::new()
 	}
 }
 
-impl <T: Ord> Extendable<T> for PairingHeap<T> {
+impl<T: Ord> Extendable<T> for PairingHeap<T> {
     fn extend <I: Iterator<T>> (&mut self, mut iter: I) {
         for value in iter {
             self.push(value)
@@ -74,7 +76,7 @@ impl <T: Ord> Extendable<T> for PairingHeap<T> {
     }
 }
 
-impl <T: Ord> FromIterator<T> for PairingHeap<T> {
+impl<T: Ord> FromIterator<T> for PairingHeap<T> {
     fn from_iter <I: Iterator<T>> (iter: I) -> PairingHeap<T> {
         let mut heap = PairingHeap::new();
         heap.extend(iter);
@@ -82,14 +84,14 @@ impl <T: Ord> FromIterator<T> for PairingHeap<T> {
     }
 }
 
-impl <T> Mutable for PairingHeap<T> {
+impl<T> Mutable for PairingHeap<T> {
 	fn clear (&mut self) {
 		self.root = None;
 		self.length = 0;
 	}
 }
 
-fn merge <T: Ord> (mut tree1: Node<T>, mut tree2: Node<T>) -> Node<T> {
+fn merge<T: Ord> (mut tree1: Node<T>, mut tree2: Node<T>) -> Node<T> {
 	if tree1.value < tree2.value {
 		tree1.add_child(tree2);
 		tree1
@@ -99,7 +101,7 @@ fn merge <T: Ord> (mut tree1: Node<T>, mut tree2: Node<T>) -> Node<T> {
 	}
 }
 
-fn merge_all_children <T: Ord> (node: &mut Node<T>) -> Option<Node<T>>{
+fn merge_all_children<T: Ord> (node: &mut Node<T>) -> Option<Node<T>>{
 	while node.children.len() > 1 {
 		let mut iter = range(0, node.children.len()).rev();
 		iter.next(); // go back one
@@ -129,7 +131,7 @@ mod test{
     use coltests::priorityqueue;
 
     type ToTest = PairingHeap<uint>;
-    
+
     use_test!(empty, collection::test_empty::<ToTest>())
     use_test!(clear, collection::test_clear::<ToTest, _>())
     use_test!(from_iter, collection::test_from_iter::<ToTest, _>())

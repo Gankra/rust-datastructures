@@ -1,11 +1,8 @@
-#![feature(unsafe_destructor)] // TODO: remove this
-#![feature(default_type_params)] // TODO: remove this
-
 //! An immutable singly-linked list, as seen in basically every functional language
 
-extern crate test; // TODO: remove this
 use std::rc::{try_unwrap, Rc};
 use std::hash::{Writer, Hash};
+use std;
 
 struct Node<T> {
     elem: T,
@@ -24,15 +21,15 @@ pub struct Items<'a, T> {
     nelem: uint,
 }
 
-pub struct ImmutSList <T> {
+pub struct ImmutSList<T> {
     front: Option<Rc<Node<T>>>,
     length: uint,
 }
 
-impl <T> ImmutSList <T> {
+impl<T> ImmutSList<T> {
     /// Constructs a new, empty `ImmutSList`
     #[inline]
-    pub fn new () -> ImmutSList <T> {
+    pub fn new () -> ImmutSList<T> {
         ImmutSList{ front: None, length: 0 }
     }
 
@@ -99,7 +96,7 @@ impl <T> ImmutSList <T> {
     }
 }
 
-impl <T> Collection for ImmutSList <T> {
+impl<T> Collection for ImmutSList<T> {
     #[inline]
     fn len (&self) -> uint {
         self.length
@@ -107,7 +104,7 @@ impl <T> Collection for ImmutSList <T> {
 }
 
 #[unsafe_destructor]
-impl <T> Drop for ImmutSList <T> {
+impl<T> Drop for ImmutSList<T> {
     fn drop (&mut self) {
         // don't want to blow the stack with destructors,
         // but also don't want to walk the whole list.
@@ -219,13 +216,11 @@ impl<S: Writer, A: Hash<S>> Hash<S> for ImmutSList<A> {
 
 #[cfg(test)]
 mod tests {
-    // TODO: add this: use std::prelude::*;
     use std::hash;
     use test::Bencher;
     use test;
 
     use super::ImmutSList;
-    // TODO: add this: use vec::Vec;
 
     #[test]
     fn test_basic() {

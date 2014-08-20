@@ -4,19 +4,19 @@ use std::default::Default;
 use coltests::priorityqueue::PriorityQueue;
 
 pub struct BinaryHeap<T>{
-    elements: Vec<T> 
+    elements: Vec<T>
 }
 
 impl<T: PartialOrd> BinaryHeap<T> {
     pub fn new() -> BinaryHeap<T> {
         BinaryHeap{elements: Vec::new()}
     }
-} 
+}
 
 impl<T: PartialOrd> BinaryHeap<T> {
     fn bubble_up(&mut self, mut index: uint){
         let mut parentIndex = parent(index);
-        while index > 0 && self.elements.get(index) < self.elements.get(parentIndex) {
+        while index > 0 && self.elements[index] < self.elements[parentIndex] {
             self.swap(index, parentIndex);
             index = parentIndex;
             parentIndex = parent(index);
@@ -27,11 +27,11 @@ impl<T: PartialOrd> BinaryHeap<T> {
         loop{
             let leftIndex = left(index);
             let rightIndex = right(index);
-            if self.is_in_bounds(leftIndex) && self.elements.get(index) > self.elements.get(leftIndex)
-                && (!self.is_in_bounds(rightIndex) || self.elements.get(rightIndex) > self.elements.get(leftIndex)) {
+            if self.is_in_bounds(leftIndex) && self.elements[index] > self.elements[leftIndex]
+                && (!self.is_in_bounds(rightIndex) || self.elements[rightIndex] > self.elements[leftIndex]) {
                 self.swap(index, leftIndex);
                 index = leftIndex;
-            } else if self.is_in_bounds(rightIndex) && self.elements.get(index) > self.elements.get(rightIndex) {
+            } else if self.is_in_bounds(rightIndex) && self.elements[index] > self.elements[rightIndex] {
                 self.swap(index, rightIndex);
                 index = rightIndex;
             } else {
@@ -73,7 +73,7 @@ impl <T: Ord> PriorityQueue <T> for BinaryHeap <T> {
         if self.is_empty() {
             None
         } else {
-            Some(self.elements.get(0))
+            Some(&self.elements[0])
         }
     }
 }
@@ -126,8 +126,8 @@ fn parent(index: uint) -> uint {
 
 fn make_heap<T: Ord>(elements: Vec<T>) -> BinaryHeap<T>{
     let mut heap = BinaryHeap{elements: elements};
-    
-    let firstParent = parent(heap.len() - 1);  
+
+    let firstParent = parent(heap.len() - 1);
 
     for i in range_inclusive(0, firstParent).rev() {
         heap.bubble_down(i);
@@ -143,7 +143,7 @@ mod test {
     use coltests::priorityqueue;
 
     type ToTest = BinaryHeap<uint>;
-    
+
     use_test!(empty, collection::test_empty::<ToTest>())
     use_test!(clear, collection::test_clear::<ToTest, _>())
     use_test!(from_iter, collection::test_from_iter::<ToTest, _>())

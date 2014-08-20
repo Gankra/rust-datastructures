@@ -1,5 +1,6 @@
 #![feature(phase)]
 #![feature(unsafe_destructor)]
+#![feature(default_type_params)]
 
 //! This is a test
 
@@ -7,14 +8,23 @@
 extern crate coltests;
 extern crate test;
 
-//lists
-pub mod singlylinkedlist;
 
-//maps
+
+// Ephemeral
+
+// Maps
 pub mod bst;
 //pub mod splaytree;
 
-//heaps
+// Heaps
 pub mod binaryheap;
 pub mod binomialheap;
 pub mod pairingheap;
+
+
+
+
+// Persistent
+
+// Lists
+pub mod immutslist;
