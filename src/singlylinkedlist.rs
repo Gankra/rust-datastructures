@@ -1,4 +1,4 @@
-#![feature(unsafe_destructor)]
+use std;
 
 struct Node<T> {
     elem: T,

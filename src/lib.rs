@@ -1,4 +1,7 @@
 #![feature(phase)]
+#![feature(unsafe_destructor)]
+
+//! This is a test
 
 #[phase(plugin, link)]
 extern crate coltests;
@@ -9,7 +12,7 @@ pub mod singlylinkedlist;
 
 //maps
 pub mod bst;
-pub mod splaytree;
+//pub mod splaytree;
 
 //heaps
 pub mod binaryheap;

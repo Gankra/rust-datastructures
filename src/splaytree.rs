@@ -4,8 +4,8 @@ use std::fmt::Show;
 
 // A SplayTree is an adaptive binary search tree optimized for
 // effeciently performing access sequences, and not individual accesses themselves
-// Any time an element is accessed, it is "splayed". 
-// 
+// Any time an element is accessed, it is "splayed".
+//
 // A splay is a special series of rotations to bring a node to the root
 // While splaying incurs a substantial overhead over just searching, it provides
 // excellent theoretical guarantees for the performance of future searches.
@@ -34,7 +34,7 @@ impl <K:Ord, V> SplayTree <K, V> {
 
     fn splay (&mut self, token: &mut NodeRefToken<K,V>) {
         enum SplayType {NoSplay, Zig, ZigZig, ZigZag};
-        
+
         let node = unsafe{ self.tree.take_unwrap_token_mut(token) };
         loop {
             let splayType = match node.get_parent() {
@@ -53,11 +53,11 @@ impl <K:Ord, V> SplayTree <K, V> {
                 NoSplay => return,
                 Zig => self.tree.rotate_up(node),
                 ZigZag => {
-                    self.tree.rotate_up(node); 
+                    self.tree.rotate_up(node);
                     self.tree.rotate_up(node);
                 }
                 ZigZig => {
-                    self.tree.rotate_up(node.get_parent_mut().unwrap()); 
+                    self.tree.rotate_up(node.get_parent_mut().unwrap());
                     self.tree.rotate_up(node)
                 }
             }
@@ -111,15 +111,14 @@ impl <K:Ord, V> SplayTree <K, V> {
                 self.tree.set_root(root.left.take());
                 self.contains(key); //splay up the largest element in the left subtree
                 self.tree.root.as_mut().unwrap().set_right(root.right);
-
             } else {
-                // if there's no left subtree (we're deleting the smallest element in the SplayTree), 
+                // if there's no left subtree (we're deleting the smallest element in the SplayTree),
                 // just make the SplayTree the right subtree
                 self.tree.set_root(root.right.take());
             }
 
             self.tree.len -= 1;
-            
+
             Some(result)
         } else {
             None
@@ -166,7 +165,7 @@ mod test {
     //use coltests::map;
 
     type ToTest = SplayTree<uint, uint>;
-    
+
     use_test!(empty, collection::test_empty::<ToTest>())
     use_test!(clear, collection::test_clear::<ToTest, _>())
     use_test!(from_iter, collection::test_from_iter::<ToTest, _>())
