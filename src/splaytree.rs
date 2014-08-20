@@ -2,19 +2,19 @@ use bst::{Tree, NodeRefToken};
 use std::default::Default;
 use std::fmt::Show;
 
-// A SplayTree is an adaptive binary search tree optimized for
-// effeciently performing access sequences, and not individual accesses themselves
-// Any time an element is accessed, it is "splayed".
-//
-// A splay is a special series of rotations to bring a node to the root
-// While splaying incurs a substantial overhead over just searching, it provides
-// excellent theoretical guarantees for the performance of future searches.
-//
-// For instance, search for all the keys in the tree, in increasing order, is an
-// O(n) operation, rather than the usual O(nlogn) for a self-balancing tree.
-//
-// Note that as a consequence, splay trees can become *very* unbalanced, and
-// individual searches may take O(n).
+/// A SplayTree is an adaptive binary search tree optimized for
+/// effeciently performing access sequences, and not individual accesses themselves
+/// Any time an element is accessed, it is "splayed".
+///
+/// A splay is a special series of rotations to bring a node to the root
+/// While splaying incurs a substantial overhead over just searching, it provides
+/// excellent theoretical guarantees for the performance of future searches.
+///
+/// For instance, search for all the keys in the tree, in increasing order, is an
+/// O(n) operation, rather than the usual O(nlogn) for a self-balancing tree.
+///
+/// Note that as a consequence, splay trees can become *very* unbalanced, and
+/// individual searches may take O(n).
 pub struct SplayTree<K,V> {
 	tree: Tree<K,V>
 }

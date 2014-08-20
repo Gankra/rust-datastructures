@@ -1,6 +1,3 @@
-
-//! A stupid implementation of a pairing heap, not useful
-
 use coltests::priorityqueue::PriorityQueue;
 use std::default::Default;
 
@@ -19,6 +16,7 @@ impl<T> Node<T> {
 	}
 }
 
+/// A stupid implementation of a pairing heap, not useful
 pub struct PairingHeap<T> {
 	root: Option<Node<T>>,
 	length: uint,

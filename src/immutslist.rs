@@ -1,5 +1,3 @@
-//! An immutable singly-linked list, as seen in basically every functional language
-
 use std::rc::{try_unwrap, Rc};
 use std::hash::{Writer, Hash};
 use std;
@@ -21,6 +19,7 @@ pub struct Items<'a, T> {
     nelem: uint,
 }
 
+/// An immutable singly-linked list, as seen in basically every functional language
 pub struct ImmutSList<T> {
     front: Option<Rc<Node<T>>>,
     length: uint,
