@@ -1,6 +1,7 @@
-use std::rand::{task_rng, Rng};
+use std::rand::{task_rng, Rng, TaskRng};
+use std::mem::transmute;
 
-static rng = task_rng();
+fn main () {} //TODO: remove this when production ready
 
 struct Node <T> {
     elem: T,
@@ -13,49 +14,53 @@ impl <T> Node <T> {
     }
 }
 
-struct SkipList {
+//Euuugh this is harder to implement than I expected
+pub struct SkipList<T> {
     sentinel: Vec<*mut Node<T>>,
     length: uint,
+    rng: TaskRng,
 }
 
 impl <T: Ord> SkipList <T> {
-    fn new () -> SkipList <T> {
-        SkipList { sentinel: Vec::new(), length: 0}
+    pub fn new () -> SkipList <T> {
+        SkipList { sentinel: Vec::new(), length: 0, rng: task_rng()}
     }
 
-    fn insert (elem: T) {
+    pub fn insert (&mut self, elem: T) {
         self.length += 1;
 
         let mut node_height = 1;
-        while rng.gen_weighted_bool(2) { //coin flip
+        while self.rng.gen_weighted_bool(2) { //coin flip
             node_height += 1;
-        } 
-
-        let new_node = box Node::new(elem, node_height);
-
-        while sentinel.len() < node_height {
-            sentinel.push(&*new_node as *mut _);
         }
 
-        let mut cur_stack = sentinel;
-        let mut cur_height = sentinel.len() - 1;
-        
+        let new_node: &mut Node<T> = unsafe { transmute(box Node::new(elem, node_height)) };
+        let new_node_ptr = new_node as *mut _;
+
+        while self.sentinel.len() < node_height {
+            self.sentinel.push(new_node);
+        }
+
+        let mut cur_stack = &mut self.sentinel;
+        let mut cur_height = cur_stack.len() - 1;
+
         loop {
-            let should_go_down = match cur_stack.get(cur_height).as_option() {
-                None => {
-                    if cur_height <= node_height {
-                        *cur_stack.get_mut(cur_height) = &*new_node as *mut _;
-                    }
-                    true
+            let next_ptr = (*cur_stack)[cur_height];
+            let should_go_down = if next_ptr.is_null() {
+                if cur_height <= node_height {
+                    *cur_stack.get_mut(cur_height) = new_node_ptr;
                 }
-                Some(next_node) => if next_node.elem  > new_node.elem {
+                true
+            } else {
+                let next_node = unsafe{ &mut*next_ptr };
+                if next_node.elem  > new_node.elem {
                     if cur_height <= node_height {
-                        new_node.grow_set(cur_height, RawPtr::null(), &*next_node as *mut _);
-                        *cur_stack.get_mut(cur_height) = &*new_node as *mut _; //huh?
+                        new_node.next.grow_set(cur_height, &RawPtr::null(), next_node as *mut _);
+                        *cur_stack.get_mut(cur_height) = new_node_ptr;
                     }
                     true
                 } else {
-                    cur_stack = next_node.next;
+                    cur_stack = &mut next_node.next;
                     false
                 }
             };
@@ -70,18 +75,21 @@ impl <T: Ord> SkipList <T> {
         }
     }
 
-    fn contains (&self, to_find: &T) -> true {
-        let mut cur_stack = sentinel;
-        let mut cur_height = sentinel.len() - 1;
-        
+    pub fn contains (&self, to_find: &T) -> bool {
+        let mut cur_stack = &self.sentinel;
+        let mut cur_height = cur_stack.len() - 1;
+
         loop {
-            let should_go_down = match cur_stack.get(cur_height).as_option() {
-                None => true,
-                Some(next_node) => match to_find.cmp(next_node.value) {
+            let next_ptr = (*cur_stack)[cur_height];
+            let should_go_down = if next_ptr.is_null() {
+                true
+            } else {
+                let next_node = unsafe { &mut *next_ptr };
+                match to_find.cmp(&next_node.elem) {
                     Equal => return true,
                     Less => true,
                     Greater => {
-                        cur_stack = next_node.next;
+                        cur_stack = &next_node.next;
                         false
                     }
                 }
@@ -97,41 +105,48 @@ impl <T: Ord> SkipList <T> {
         }
     }
 
-    fn pop (elem: &T) -> Option<T> {
+    pub fn pop (&mut self, elem: &T) -> Option<T> {
         self.length -= 1;
 
-        let mut cur_stack = sentinel;
-        let mut cur_height = sentinel.len() - 1;
-        let mut result_node = None;
-        
-        loop {
-            let should_go_down = match cur_stack.get(cur_height).as_option() {
-                None => {
-                    true
-                }
-                Some(next_node) => match elem.cmp(next_node.elem) {
-                    Equal => 
-                        *cur_stack.get_mut(cur_height) = next_node.next.pop().unwrap();
-                        result_node = Some(next_node);
-                        true
-                    Less => {
-                        cur_stack = next_node.next;
-                        false
-                    }
-                    Greater => true
-            };
+        let result_node = {
+            let mut cur_stack = &mut self.sentinel;
+            let mut cur_height = cur_stack.len() - 1;
+            let mut result_node = None;
 
-            if should_go_down {
-                if cur_height == 0 {
-                    break;
+            loop {
+                let next_ptr = (*cur_stack)[cur_height];
+                let should_go_down = if next_ptr.is_null() {
+                    true
                 } else {
-                    cur_height -= 1;
+                    let next_node = unsafe{ &mut *next_ptr };
+                    match elem.cmp(&next_node.elem) {
+                        Equal => {
+                            *cur_stack.get_mut(cur_height) = next_node.next.pop().unwrap();
+                            result_node = Some(next_node);
+                            true
+                        }
+                        Less => {
+                            cur_stack = &mut next_node.next;
+                            false
+                        }
+                        Greater => true
+                    }
+                };
+
+                if should_go_down {
+                    if cur_height == 0 {
+                        break;
+                    } else {
+                        cur_height -= 1;
+                    }
                 }
             }
-        }
 
-        while !sentinel.is_empty() && sentinel.last().unwrap().is_null() {
-            sentinel.pop();
+            result_node
+        };
+
+        while !self.sentinel.is_empty() && self.sentinel.last().unwrap().is_null() {
+            self.sentinel.pop();
         }
 
         result_node.map(|node| node.elem)
