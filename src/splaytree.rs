@@ -105,16 +105,19 @@ impl <K:Ord, V> SplayTree <K, V> {
 
         if self.contains(key) { //searching for key splays its node
             let mut root = self.tree.root.take_unwrap(); //remove the root from the SplayTree
+
+            let left = root.left.take();
+            let right = root.right.take();
             let result = root.value;
 
-            if root.left.is_some() {
-                self.tree.set_root(root.left.take());
+            if left.is_some() {
+                self.tree.set_root(left);
                 self.contains(key); //splay up the largest element in the left subtree
-                self.tree.root.as_mut().unwrap().set_right(root.right);
+                self.tree.root.as_mut().unwrap().set_right(right);
             } else {
                 // if there's no left subtree (we're deleting the smallest element in the SplayTree),
                 // just make the SplayTree the right subtree
-                self.tree.set_root(root.right.take());
+                self.tree.set_root(right);
             }
 
             self.tree.len -= 1;

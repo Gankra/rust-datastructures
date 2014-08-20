@@ -69,7 +69,7 @@ impl <T> BlockedList<T> {
 
     pub fn insert<'a>(&mut self, index: uint, value: T) {
         if index > self.length { fail!("Index out of bounds"); }
-        
+
         let mut cur_index = 0;
         for block in self.list.iter() {
             let block_len = block.len();
@@ -151,7 +151,7 @@ impl <T> MutableSeq<T> for BlockedList<T> {
         let block_size = self.block_size;
         let should_grow = match self.list.back_mut() {
             None => true,
-            Some(block) => block.len() == block_size 
+            Some(block) => block.len() == block_size
         };
 
         if should_grow {
