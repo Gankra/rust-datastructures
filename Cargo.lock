@@ -1,0 +1,11 @@
+[root]
+name = "collections"
+version = "0.1.0"
+dependencies = [
+ "coltests 0.1.0",
+]
+
+[[package]]
+name = "coltests"
+version = "0.1.0"
+
