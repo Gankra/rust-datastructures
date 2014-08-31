@@ -19,6 +19,7 @@ extern crate test;
 // Maps
 pub mod bst;
 pub mod splaytree;
+pub mod btree;
 
 // Heaps
 pub mod binaryheap;
