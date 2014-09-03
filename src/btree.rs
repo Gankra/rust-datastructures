@@ -1,21 +1,32 @@
+// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // This implementation is largely based on the one described in *Open Data Structures*, which
 // can be freely downloaded at http://opendatastructures.org/, and whose contents are as of this
 // writing (August 2014) freely licensed under the following Creative Commons Attribution
 // License: [CC BY 2.5 CA](http://creativecommons.org/licenses/by/2.5/ca/).
+/// "Order" of the B-tree, from which all other properties are derived
 
 use std::mem;
-use std::iter::range_inclusive;
+use std::slice::Items;
 
 /// "Order" of the B-tree, from which all other properties are derived
 static B: uint = 6;
 /// Maximum number of elements in a node
-static capacity: uint = 2 * B - 1;
+static CAPACITY: uint = 2 * B - 1;
 /// Minimum number of elements in a node
-static min_load: uint = B - 1;
+static MIN_LOAD: uint = B - 1;
 /// Maximum number of children in a node
-static edge_capacity: uint = capacity + 1;
+static EDGE_CAPACITY: uint = CAPACITY + 1;
 /// Amount to take off the tail of a node being split
-static split_len: uint = B - 1;
+static SPLIT_LEN: uint = B - 1;
 
 /// Represents a search path for mutating
 type SearchStack<K,V> = Vec<(*mut Node<K,V>, uint)>;
@@ -26,12 +37,17 @@ enum InsertionResult<K,V>{
     Split(K, V, Box<Node<K,V>>),
 }
 
+/// Represents the result of a search for a key in a single node
+enum SearchResult {
+    Found(uint), Bound(uint),
+}
+
 /// A B-Tree Node
 struct Node<K,V> {
     length: uint,
-    keys: [Option<K>, ..capacity],
-    edges: [Option<Box<Node<K,V>>>, ..edge_capacity],
-    vals: [Option<V>, ..capacity],
+    keys: [Option<K>, ..CAPACITY],
+    edges: [Option<Box<Node<K,V>>>, ..EDGE_CAPACITY],
+    vals: [Option<V>, ..CAPACITY],
 }
 
 
@@ -56,7 +72,7 @@ impl<K,V> BTree<K,V> {
 impl<K: Ord, V> Map<K,V> for BTree<K,V> {
     // Searching in a B-Tree is pretty straightforward.
     //
-    // Start at the root. Try to find the key in the current node. If we find, return it.
+    // Start at the root. Try to find the key in the current node. If we find it, return it.
     // If it's not in there, follow the edge *before* the smallest key larger than
     // the search key. If no such key exists (they're *all* smaller), then just take the last
     // edge in the node. If we're in a leaf and we don't find our key, then it's not
@@ -66,80 +82,44 @@ impl<K: Ord, V> Map<K,V> for BTree<K,V> {
             None => None,
             Some(root) => {
                 let mut cur_node = &**root;
-                let leaf_depth = self.depth;
-
-                'main: for cur_depth in range_inclusive(1, leaf_depth) {
-                    let is_leaf = leaf_depth == cur_depth;
-                    let node_len = cur_node.length;
-
-                    // linear search the node's keys because we're small
-                    // FIXME(Gankro): if we ever get generic integer arguments
-                    // to support variable choices of `B`, then this should be
-                    // tuned to fall into binary search at some arbitrary level
-                    for i in range(0, node_len) {
-                        match cur_node.keys[i].as_ref().unwrap().cmp(key) {
-                            Less => {}, // keep walkin' son
-                            Equal => return cur_node.vals[i].as_ref(),
-                            Greater => if is_leaf {
-                                return None
-                            } else {
-                                cur_node = &**cur_node.edges[i].as_ref().unwrap();
-                                continue 'main;
+                loop {
+                    match cur_node.search(key) {
+                        Found(i) => return cur_node.vals[i].as_ref(),
+                        Bound(i) => match cur_node.edges[i].as_ref() {
+                            None => return None,
+                            Some(next_node) => {
+                                cur_node = &**next_node;
+                                continue;
                             }
                         }
                     }
-
-                    // all the keys are smaller than the one we're searching for
-                    if is_leaf {
-                        // We're a leaf, so that's it, it's just not in here
-                        return None
-                    } else {
-                        // We're an internal node, so we can always fall back to
-                        // the "everything bigger than my keys" edge: the last one
-                        cur_node = &**cur_node.edges[node_len].as_ref().unwrap();
-                    }
                 }
-                unreachable!();
             }
         }
     }
 }
 
 impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
-    // See `find` for implementation notes, this is basically a copy-paste with mut's sprinkled
+    // See `find` for implementation notes, this is basically a copy-paste with mut's added
     fn find_mut(&mut self, key: &K) -> Option<&mut V> {
         match self.root.as_mut() {
             None => None,
             Some(root) => {
-                // Borrowck hack
+                // temp_node is a Borrowck hack for having a mutable value outlive a loop iteration
                 let mut temp_node = &mut **root;
-                let leaf_depth = self.depth;
-
-                'main: for cur_depth in range_inclusive(1, leaf_depth) {
+                loop {
                     let cur_node = temp_node;
-                    let is_leaf = leaf_depth == cur_depth;
-                    let node_len = cur_node.length;
-
-                    for i in range(0, node_len) {
-                        match cur_node.keys[i].as_ref().unwrap().cmp(key) {
-                            Less => {},
-                            Equal => return cur_node.vals[i].as_mut(),
-                            Greater => if is_leaf {
-                                return None
-                            } else {
-                                temp_node = &mut **cur_node.edges[i].as_mut().unwrap();
-                                continue 'main;
+                    match cur_node.search(key) {
+                        Found(i) => return cur_node.vals[i].as_mut(),
+                        Bound(i) => match cur_node.edges[i].as_mut() {
+                            None => return None,
+                            Some(next_node) => {
+                                temp_node = &mut **next_node;
+                                continue;
                             }
                         }
                     }
-
-                    if is_leaf {
-                        return None
-                    } else {
-                        temp_node = &mut **cur_node.edges[node_len].as_mut().unwrap();
-                    }
                 }
-                unreachable!();
             }
         }
     }
@@ -171,8 +151,8 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
     // the split, we will never do this. Again, this shouldn't effect the analysis.
 
     fn swap(&mut self, mut key: K, mut value: V) -> Option<V> {
-        // FIXME(Gankro): this is gross because of the lexical borrows
-        // if pcwalton's work pans out, this can be made much better!
+        // FIXME(Gankro): this is gross because of lexical borrows.
+        // If pcwalton's work pans out, this can be made much better!
         // See `find` for a more idealized structure
         if self.root.is_none() {
             self.root = Some(Node::make_leaf_root(key, value));
@@ -183,7 +163,6 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
             let visit_stack = {
                 // We need this temp_node for borrowck wrangling
                 let mut temp_node = &mut **self.root.as_mut().unwrap();
-                let leaf_depth = self.depth;
                 // visit_stack is a stack of rawptrs to nodes paired with indices, respectively
                 // representing the nodes and edges of our search path. We have to store rawptrs
                 // because as far as Rust is concerned, we can mutate aliased data with such a
@@ -196,47 +175,32 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
                 // we accept this potential unsafety and complexity in the name of performance.
                 let mut visit_stack = Vec::with_capacity(self.depth);
 
-                'main: for cur_depth in range_inclusive(1, leaf_depth) {
-                    let is_leaf = leaf_depth == cur_depth;
+                loop {
                     let cur_node = temp_node;
-                    let node_len = cur_node.length;
                     let cur_node_ptr = cur_node as *mut _;
 
                     // See `find` for a description of this search
-                    for i in range(0, node_len) {
-                        let cmp = cur_node.keys[i].as_ref().unwrap().cmp(&key);
-                        match cmp {
-                            Less => {}, // keep walkin' son, she's too small
-                            Equal => {
-                                // Perfect match, swap the contents and return the old ones
-                                mem::swap(cur_node.vals[i].as_mut().unwrap(), &mut value);
-                                mem::swap(cur_node.keys[i].as_mut().unwrap(), &mut key);
-                                return Some(value);
-                            },
-                            Greater => if is_leaf {
-                                // We've found where to insert this key/value pair
-                                visit_stack.push((cur_node_ptr, i));
-                                break 'main;
-                            } else {
-                                // We've found the subtree to insert this key/value pair in
-                                visit_stack.push((cur_node_ptr, i));
-                                temp_node = &mut **cur_node.edges[i].as_mut().unwrap();
-                                continue 'main;
+                    match cur_node.search(&key) {
+                        Found(i) => {
+                            // Perfect match, swap the contents and return the old ones
+                            mem::swap(cur_node.vals[i].as_mut().unwrap(), &mut value);
+                            mem::swap(cur_node.keys[i].as_mut().unwrap(), &mut key);
+                            return Some(value);
+                        },
+                        Bound(i) => {
+                            visit_stack.push((cur_node_ptr, i));
+                            match cur_node.edges[i].as_mut() {
+                                None => {
+                                    // We've found where to insert this key/value pair
+                                    break;
+                                }
+                                Some(next_node) => {
+                                    // We've found the subtree to insert this key/value pair in
+                                    temp_node = &mut **next_node;
+                                    continue;
+                                }
                             }
                         }
-                    }
-
-                    // all the keys are smaller than the one we're searching for, so try to go down
-                    // the last edge in our node
-                    visit_stack.push((cur_node_ptr, node_len));
-
-                    if is_leaf {
-                        // We're at a leaf, so we're done
-                        break 'main;
-                    } else {
-                        // We're at an internal node, so we need to keep going
-                        temp_node = &mut **cur_node.edges[node_len].as_mut().unwrap();
-                        continue 'main;
                     }
                 }
                 visit_stack
@@ -292,49 +256,39 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
             let visit_stack = {
                 // We need this temp_node for borrowck wrangling
                 let mut temp_node = &mut **self.root.as_mut().unwrap();
-                let leaf_depth = self.depth;
                 // See `pop` for a description of this variable
                 let mut visit_stack = Vec::with_capacity(self.depth);
 
-                'main: for cur_depth in range_inclusive(1, leaf_depth) {
-                    let is_leaf = leaf_depth == cur_depth;
+                loop {
                     let cur_node = temp_node;
-                    let node_len = cur_node.length;
                     let cur_node_ptr = cur_node as *mut _;
 
                     // See `find` for a description of this search
-                    for i in range(0, node_len) {
-                        let cmp = cur_node.keys[i].as_ref().unwrap().cmp(key);
-                        match cmp {
-                            Less => {}, // keep walkin' son, she's too small
-                            Equal => {
-                                // Perfect match. Terminate the stack here, and move to the
-                                // next phase (remove_stack).
-                                visit_stack.push((cur_node_ptr, i));
-                                break 'main;
-                            },
-                            Greater => if is_leaf {
-                                // The key isn't in this tree
-                                return None;
-                            } else {
+                    match cur_node.search(key) {
+                        Found(i) => {
+                            // Perfect match. Terminate the stack here, and move to the
+                            // next phase (remove_stack).
+                            visit_stack.push((cur_node_ptr, i));
+
+                            if cur_node.edges[i].is_some() {
+                                // We found the key in an internal node, but that's annoying,
+                                // so let's swap it with a leaf key and pretend we *did* find
+                                // it in a leaf. Note that after calling this, the tree is in an
+                                // inconsistent state, but will be consistent after we remove the
+                                // swapped value in `remove_stack`
+                                leafify_stack(&mut visit_stack);
+                            }
+                            break;
+                        },
+                        Bound(i) => match cur_node.edges[i].as_mut() {
+                            None => return None, // We're at a leaf; the key isn't in this tree
+                            Some(next_node) => {
                                 // We've found the subtree the key must be in
                                 visit_stack.push((cur_node_ptr, i));
-                                temp_node = &mut **cur_node.edges[i].as_mut().unwrap();
-                                continue 'main;
+                                temp_node = &mut **next_node;
+                                continue;
                             }
                         }
-                    }
-
-                    // all the keys are smaller than the one we're searching for, so try to go down
-                    // the last edge in our node
-                    if is_leaf {
-                        // We're at a leaf, so it's just not in here
-                        return None;
-                    } else {
-                        // We're at an internal node, so we need to keep going
-                        visit_stack.push((cur_node_ptr, node_len));
-                        temp_node = &mut **cur_node.edges[node_len].as_mut().unwrap();
-                        continue 'main;
                     }
                 }
                 visit_stack
@@ -346,7 +300,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
     }
 }
 
-impl<K,V> BTree<K,V> {
+impl<K: Ord, V> BTree<K,V> {
     /// insert the key and value into the top element in the stack, and if that node has to split
     /// recursively insert the split contents into the stack until splits stop. Then replace the
     /// stack back into the tree.
@@ -391,17 +345,10 @@ impl<K,V> BTree<K,V> {
         }
     }
 
-    /// Remove the key and value in the top element of the stack, then handle underflows
+    /// Remove the key and value in the top element of the stack, then handle underflows.
+    /// Assumes the stack represents a search path from the root to a leaf.
     fn remove_stack(&mut self, mut stack: SearchStack<K,V>) -> V {
         self.length -= 1;
-
-        if stack.len() < self.depth {
-            // We found the key in an internal node, but that's annoying,
-            // so let's swap it with a leaf key and pretend we *did* find it in a leaf.
-            // Note that after calling this, the tree is in an inconsistent state, but will
-            // be consistent after we remove the swapped value just below
-            leafify_stack(&mut stack);
-        }
 
         // Remove the key-value pair from the leaf, check if the node is underfull, and then
         // promptly forget the leaf and ptr to avoid ownership issues
@@ -409,7 +356,7 @@ impl<K,V> BTree<K,V> {
             let (node_ptr, index) = stack.pop().unwrap();
             let node = &mut *node_ptr;
             let (_key, value) = node.remove_as_leaf(index);
-            let underflow = node.length < min_load;
+            let underflow = node.length < MIN_LOAD;
             (value, underflow)
         };
 
@@ -432,7 +379,7 @@ impl<K,V> BTree<K,V> {
                         unsafe {
                             let parent = &mut *parent_ptr;
                             parent.handle_underflow(index);
-                            underflow = parent.length < min_load;
+                            underflow = parent.length < MIN_LOAD;
                         }
                     } else {
                         // All done!
@@ -444,7 +391,7 @@ impl<K,V> BTree<K,V> {
     }
 }
 
-impl<K,V> Node<K,V> {
+impl<K: Ord, V> Node<K,V> {
     /// Make a new node
     fn new() -> Node<K,V> {
         Node {
@@ -456,6 +403,28 @@ impl<K,V> Node<K,V> {
         }
     }
 
+    /// An iterator for the keys of this node
+    fn keys<'a>(&'a self) -> Keys<'a, K> {
+        Keys{ it: self.keys.iter() }
+    }
+
+    /// Searches for the given key in the node. If it finds an exact match,
+    /// `Found` will be yielded with the matching index. If it fails to find an exact match,
+    /// `Bound` will be yielded with the index of the subtree the key must lie in.
+    fn search(&self, key: &K) -> SearchResult {
+        // linear search the node's keys because we're small
+        // FIXME(Gankro): if we ever get generic integer arguments
+        // to support variable choices of `B`, then this should be
+        // tuned to fall into binary search at some arbitrary level
+        for (i, k) in self.keys().enumerate() {
+            match k.cmp(key) {
+                Less => {}, // keep walkin' son, she's too small
+                Equal => return Found(i),
+                Greater => return Bound(i),
+            }
+        }
+        Bound(self.length)
+    }
 
     /// Make a leaf root from scratch
     fn make_leaf_root(key: K, value: V) -> Box<Node<K,V>> {
@@ -480,7 +449,7 @@ impl<K,V> Node<K,V> {
     /// If the node is full, we have to split it.
     fn insert_as_leaf(&mut self, index: uint, key: K, value: V) -> InsertionResult<K,V> {
         let len = self.length;
-        if len < capacity {
+        if len < CAPACITY {
             // The element can fit, just insert it
             self.insert_fit_as_leaf(index, key, value);
             Fit
@@ -504,7 +473,7 @@ impl<K,V> Node<K,V> {
     fn insert_as_internal(&mut self, index: uint, key: K, value: V, right: Box<Node<K,V>>)
             -> InsertionResult<K,V> {
         let len = self.length;
-        if len < capacity {
+        if len < CAPACITY {
             // The element can fit, just insert it
             self.insert_fit_as_internal(index, key, value, right);
             Fit
@@ -547,14 +516,14 @@ impl<K,V> Node<K,V> {
     fn split(&mut self) -> (K, V, Box<Node<K, V>>) {
         let mut right = box Node::new();
 
-        steal_last(self.vals.as_mut_slice(), right.vals.as_mut_slice(), split_len);
-        steal_last(self.keys.as_mut_slice(), right.keys.as_mut_slice(), split_len);
+        steal_last(self.vals.as_mut_slice(), right.vals.as_mut_slice(), SPLIT_LEN);
+        steal_last(self.keys.as_mut_slice(), right.keys.as_mut_slice(), SPLIT_LEN);
         // FIXME(Gankro): This isn't necessary for leaf nodes
-        steal_last(self.edges.as_mut_slice(), right.edges.as_mut_slice(), split_len + 1);
+        steal_last(self.edges.as_mut_slice(), right.edges.as_mut_slice(), SPLIT_LEN + 1);
 
         // How much each node got
-        let left_len = capacity - split_len;
-        let right_len = split_len;
+        let left_len = CAPACITY - SPLIT_LEN;
+        let right_len = SPLIT_LEN;
 
         // But we're gonna pop one off the end of the left one, so subtract one
         self.length = left_len - 1;
@@ -596,7 +565,7 @@ impl<K,V> Node<K,V> {
         // but merge left and right if left is low too.
         let mut left = self.edges[underflowed_child_index - 1].take().unwrap();
         let left_len = left.length;
-        if left_len > min_load {
+        if left_len > MIN_LOAD {
             // Steal! Stealing is roughly analagous to a binary tree rotation.
             // In this case, we're "rotating" right.
 
@@ -648,7 +617,7 @@ impl<K,V> Node<K,V> {
         // but merge left and right if right is low too.
         let mut right = self.edges[underflowed_child_index + 1].take().unwrap();
         let right_len = right.length;
-        if right_len > min_load {
+        if right_len > MIN_LOAD {
             // Steal! Stealing is roughly analagous to a binary tree rotation.
             // In this case, we're "rotating" left.
 
@@ -710,6 +679,16 @@ impl<K,V> Node<K,V> {
     }
 }
 
+struct Keys<'a, K>{
+    it: Items<'a, Option<K>>
+}
+
+impl<'a, K> Iterator<&'a K> for Keys<'a, K> {
+    fn next(&mut self) -> Option<&'a K> {
+        self.it.next().and_then(|x| x.as_ref())
+    }
+}
+
 /// Subroutine for removal. Takes a search stack for a key that terminates at an
 /// internal node, and makes it mutates the tree and search stack to make it a search
 /// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
@@ -766,7 +745,7 @@ fn remove_and_shift<T>(slice: &mut [Option<T>], index: uint) -> Option<T> {
     result
 }
 
-/// Subroutine for splitting a node. Put the `split_len` last elements from left,
+/// Subroutine for splitting a node. Put the `SPLIT_LEN` last elements from left,
 /// (which should be full) and put them at the start of right (which should be empty)
 fn steal_last<T>(left: &mut[T], right: &mut[T], amount: uint) {
     // Is there a better way to do this?
@@ -799,8 +778,8 @@ impl<K,V> Mutable for BTree<K,V> {
         // Note that this will trigger a lot of recursive destructors, but BTrees can't get
         // very deep, so we won't worry about it for now.
         self.root = None;
-        self.depth = 0;
         self.length = 0;
+        self.depth = 0;
     }
 }
 
@@ -854,5 +833,144 @@ mod test {
             assert_eq!(map.pop(&(2*i+1)), Some(i*200 + 100));
             assert_eq!(map.len(), 5000 - i - 1);
         }
+    }
+}
+
+
+
+
+#[cfg(test)]
+mod bench {
+    use test::Bencher;
+    use super::BTree;
+
+    use std::rand;
+    use std::rand::Rng;
+
+    pub fn insert_rand_n<M: MutableMap<uint, uint>>(n: uint,
+                                                    map: &mut M,
+                                                    b: &mut Bencher) {
+        // setup
+        let mut rng = rand::weak_rng();
+
+        map.clear();
+        for _ in range(0, n) {
+            map.insert(rng.gen::<uint>() % n, 1);
+        }
+
+        // measure
+        b.iter(|| {
+            let k = rng.gen::<uint>() % n;
+            map.insert(k, 1);
+            map.remove(&k);
+        })
+    }
+
+    pub fn insert_seq_n<M: MutableMap<uint, uint>>(n: uint,
+                                                   map: &mut M,
+                                                   b: &mut Bencher) {
+        // setup
+        map.clear();
+        for i in range(0u, n) {
+            map.insert(i*2, 1);
+        }
+
+        // measure
+        let mut i = 1;
+        b.iter(|| {
+            map.insert(i, 1);
+            map.remove(&i);
+            i = (i + 2) % n;
+        })
+    }
+
+    pub fn find_rand_n<M:MutableMap<uint,uint>>(n: uint,
+                                                map: &mut M,
+                                                b: &mut Bencher) {
+        // setup
+        let mut rng = rand::weak_rng();
+        let mut keys = Vec::from_fn(n, |_| rng.gen::<uint>() % n);
+
+        for k in keys.iter() {
+            map.insert(*k, 1);
+        }
+
+        rng.shuffle(keys.as_mut_slice());
+
+        // measure
+        let mut i = 0;
+        b.iter(|| {
+            map.find(&keys[i]);
+            i = (i + 1) % n;
+        })
+    }
+
+    pub fn find_seq_n<M:MutableMap<uint,uint>>(n: uint,
+                                               map: &mut M,
+                                               b: &mut Bencher) {
+        // setup
+        for i in range(0u, n) {
+            map.insert(i, 1);
+        }
+
+        // measure
+        let mut i = 0;
+        b.iter(|| {
+            let x = map.find(&i);
+            i = (i + 1) % n;
+            x
+        })
+    }
+
+    // Find seq
+    #[bench]
+    pub fn insert_rand_100(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        insert_rand_n(100, &mut m, b);
+    }
+
+    #[bench]
+    pub fn insert_rand_10_000(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        insert_rand_n(10_000, &mut m, b);
+    }
+
+    // Insert seq
+    #[bench]
+    pub fn insert_seq_100(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        insert_seq_n(100, &mut m, b);
+    }
+
+    #[bench]
+    pub fn insert_seq_10_000(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        insert_seq_n(10_000, &mut m, b);
+    }
+
+    // Find rand
+    #[bench]
+    pub fn find_rand_100(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        find_rand_n(100, &mut m, b);
+    }
+
+    #[bench]
+    pub fn find_rand_10_000(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        find_rand_n(10_000, &mut m, b);
+    }
+
+    // Find seq
+    #[bench]
+    pub fn find_seq_100(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        find_seq_n(100, &mut m, b);
+    }
+
+    #[bench]
+    pub fn find_seq_10_000(b: &mut Bencher) {
+        let mut m : BTree<uint,uint> = BTree::new();
+        find_seq_n(10_000, &mut m, b);
     }
 }

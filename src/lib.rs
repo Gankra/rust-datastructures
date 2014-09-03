@@ -17,14 +17,14 @@ extern crate test;
 // Ephemeral
 
 // Maps
-pub mod bst;
-pub mod splaytree;
+// pub mod bst;
+// pub mod splaytree;
 pub mod btree;
 
 // Heaps
-pub mod binaryheap;
-pub mod binomialheap;
-pub mod pairingheap;
+// pub mod binaryheap;
+// pub mod binomialheap;
+// pub mod pairingheap;
 
 
 
@@ -32,4 +32,4 @@ pub mod pairingheap;
 // Persistent
 
 // Lists
-pub mod immutslist;
+// pub mod immutslist;
