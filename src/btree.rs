@@ -780,12 +780,11 @@ fn steal_last<T>(left: &mut[T], right: &mut[T], amount: uint) {
 
 /// Subroutine for merging the contents of right into left
 /// Assumes left has space for all of right
-fn merge<T>(left: &mut[Option<T>], right: &mut[Option<T>]) {
-    let left_len = left.len();
-    let right_len = right.len();
-    for i in range(0, right_len) {
-        ptr::write(left.as_mut_ptr().offset((left_len - right_len + i) as int)
-            , right.unsafe_get_mut(i).take());
+fn merge<T>(left: &mut[T], right: &mut[T]) {
+    let offset = left.len() - right.len();
+    for (a,b) in left.mut_slice_from(offset).mut_iter()
+            .zip(right.mut_iter()) {
+        mem::swap(a, b);
     }
 }
 
