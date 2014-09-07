@@ -8,14 +8,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This implementation is largely based on the one described in *Open Data Structures*, which
-// can be freely downloaded at http://opendatastructures.org/, and whose contents are as of this
+// This implementation is largely based on the high-level description and analysis of B-Trees
+// found in *Open Data Structures* (ODS). Although our implementation does not use any of
+// the source found in ODS, if one wishes to review the high-level design of this structure, it
+// can be freely downloaded at http://opendatastructures.org/. Its contents are as of this
 // writing (August 2014) freely licensed under the following Creative Commons Attribution
 // License: [CC BY 2.5 CA](http://creativecommons.org/licenses/by/2.5/ca/).
-/// "Order" of the B-tree, from which all other properties are derived
 
-use std::mem;
+use std::{ptr, mem};
 use std::slice::Items;
+
+/// Generate an array of Nones
+macro_rules! nones(
+    ($typ: ty, $count: expr) => (
+        unsafe {
+            let mut tmp: [Option<$typ>, .. $count] = mem::uninitialized();
+            for i in tmp.as_mut_slice().mut_iter() {
+                ptr::write(i, None);
+            }
+            tmp
+        }
+    );
+)
 
 /// "Order" of the B-tree, from which all other properties are derived
 static B: uint = 6;
@@ -396,10 +410,9 @@ impl<K: Ord, V> Node<K,V> {
     fn new() -> Node<K,V> {
         Node {
             length: 0,
-            // FIXME(Gankro): this is gross, I guess you need a macro? [None, ..capacity] uses copy
-            keys:   [None, None, None, None, None, None, None, None, None, None, None],
-            vals: [None, None, None, None, None, None, None, None, None, None, None],
-            edges:  [None, None, None, None, None, None, None, None, None, None, None, None],
+            keys: nones!(K, CAPACITY),
+            vals: nones!(V, CAPACITY),
+            edges: nones!(Box<Node<K,V>>, CAPACITY + 1),
         }
     }
 
