@@ -741,21 +741,29 @@ fn leafify_stack<K,V>(stack: &mut SearchStack<K,V>) {
 /// Basically `Vec.insert(index)`. Assumes that the last element in the slice is
 /// Somehow "empty" and can be overwritten.
 fn shift_and_insert<T>(slice: &mut [T], index: uint, elem: T) {
-    // FIXME(Gankro): This should probably be a copy_memory and a write?
-    for i in range(index, slice.len() - 1).rev() {
-        slice.swap(i, i + 1);
+    unsafe {
+        let start = slice.as_mut_ptr().offset(index as int);
+        let len = slice.len();
+        if index < len - 1 {
+            copy_memory(start.offset(1), start, len - index - 1);
+        }
+        ptr::write(start, Some(elem));
     }
-    slice[index] = elem;
 }
 
 /// Basically `Vec.remove(index)`.
 fn remove_and_shift<T>(slice: &mut [Option<T>], index: uint) -> Option<T> {
-    let result = slice[index].take();
-    // FIXME(Gankro): This should probably be a copy_memory and write?
-    for i in range(index, slice.len() - 1) {
-        slice.swap(i, i + 1);
+    unsafe {
+        let first = slice.as_mut_ptr();
+        let start = first.offset(index as int);
+        let result = ptr::read(start);
+        let len = slice.len();
+        if len > 1 && index < len - 1 {
+            copy_memory(start, start.offset(1), len - index - 1);
+        }
+        ptr::write(first.offset((len - 1) as int), None);
+        result
     }
-    result
 }
 
 /// Subroutine for splitting a node. Put the `SPLIT_LEN` last elements from left,
