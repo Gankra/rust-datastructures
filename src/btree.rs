@@ -16,9 +16,9 @@
 // License: [CC BY 2.5 CA](http://creativecommons.org/licenses/by/2.5/ca/).
 
 use std::{ptr, mem};
-use std::slice::{Items, Found, NotFound};
+use std::slice::Items;
 
-/// Generate an array of Nones
+/// Generate an array of None<$typ>'s of size $count
 macro_rules! nones(
     ($typ: ty, $count: expr) => (
         unsafe {
@@ -31,8 +31,13 @@ macro_rules! nones(
     );
 )
 
-/// "Order" of the B-tree, from which all other properties are derived
-static B: uint = 6;
+/// "Order" of the B-tree, from which all other properties are derived. In experiments with
+/// different values of B on a BTree<uint, uint> on 64-bit linux, `B = 5` struck the best
+/// balance between search and mutation time. Lowering B improves mutation time (less array
+/// shifting), and raising B improves search time (less depth and pointer following).
+/// However, increasing B higher than 5 had marginal search gains compared to mutation costs.
+/// This value should be re-evaluated whenever the tree is significantly refactored.
+static B: uint = 5;
 /// Maximum number of elements in a node
 static CAPACITY: uint = 2 * B - 1;
 /// Minimum number of elements in a node
@@ -53,12 +58,18 @@ enum InsertionResult<K,V>{
 
 /// Represents the result of a search for a key in a single node
 enum SearchResult {
-    Match(uint), Recurse(uint),
+    Found(uint), GoDown(uint),
 }
 
-/// A B-Tree Node
+/// A B-Tree Node. We keep keys/edges/values separate to optimize searching for keys.
 struct Node<K,V> {
     length: uint,
+    // FIXME(Gankro): We use Options here because there currently isn't a safe way to deal
+    // with partially initialized [T, ..n]'s. #16998 is one solution to this. Other alternatives
+    // include Vec's or heap-allocating a raw buffer of bytes, similar to HashMap's RawTable.
+    // However, those solutions introduce an unfortunate extra of indirection (unless the whole
+    // node is inlined into this one mega-buffer). We consider this solution to be sufficient for a
+    // first-draft, and it has the benefit of being a nice safe starting point to optimize from.
     keys: [Option<K>, ..CAPACITY],
     edges: [Option<Box<Node<K,V>>>, ..EDGE_CAPACITY],
     vals: [Option<V>, ..CAPACITY],
@@ -98,8 +109,8 @@ impl<K: Ord, V> Map<K,V> for BTree<K,V> {
                 let mut cur_node = &**root;
                 loop {
                     match cur_node.search(key) {
-                        Match(i) => return cur_node.vals[i].as_ref(),
-                        Recurse(i) => match cur_node.edges[i].as_ref() {
+                        Found(i) => return cur_node.vals[i].as_ref(),
+                        GoDown(i) => match cur_node.edges[i].as_ref() {
                             None => return None,
                             Some(next_node) => {
                                 cur_node = &**next_node;
@@ -124,8 +135,8 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
                 loop {
                     let cur_node = temp_node;
                     match cur_node.search(key) {
-                        Match(i) => return cur_node.vals[i].as_mut(),
-                        Recurse(i) => match cur_node.edges[i].as_mut() {
+                        Found(i) => return cur_node.vals[i].as_mut(),
+                        GoDown(i) => match cur_node.edges[i].as_mut() {
                             None => return None,
                             Some(next_node) => {
                                 temp_node = &mut **next_node;
@@ -195,13 +206,13 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
 
                     // See `find` for a description of this search
                     match cur_node.search(&key) {
-                        Match(i) => {
+                        Found(i) => {
                             // Perfect match, swap the contents and return the old ones
                             mem::swap(cur_node.vals[i].as_mut().unwrap(), &mut value);
                             mem::swap(cur_node.keys[i].as_mut().unwrap(), &mut key);
                             return Some(value);
                         },
-                        Recurse(i) => {
+                        GoDown(i) => {
                             visit_stack.push((cur_node_ptr, i));
                             match cur_node.edges[i].as_mut() {
                                 None => {
@@ -279,7 +290,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
 
                     // See `find` for a description of this search
                     match cur_node.search(key) {
-                        Match(i) => {
+                        Found(i) => {
                             // Perfect match. Terminate the stack here, and move to the
                             // next phase (remove_stack).
                             visit_stack.push((cur_node_ptr, i));
@@ -294,7 +305,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
                             }
                             break;
                         },
-                        Recurse(i) => match cur_node.edges[i].as_mut() {
+                        GoDown(i) => match cur_node.edges[i].as_mut() {
                             None => return None, // We're at a leaf; the key isn't in this tree
                             Some(next_node) => {
                                 // We've found the subtree the key must be in
@@ -425,27 +436,21 @@ impl<K: Ord, V> Node<K,V> {
     /// `Found` will be yielded with the matching index. If it fails to find an exact match,
     /// `Bound` will be yielded with the index of the subtree the key must lie in.
     fn search(&self, key: &K) -> SearchResult {
-        // FIXME(Gankro): Tune when to search linear or binary
-        self.search_binary(key)
+        // FIXME(Gankro): Tune when to search linear or binary when B becomes configurable.
+        // For the B configured as of this writing (B = 5), binary search was *singnificantly*
+        // worse.
+        self.search_linear(key)
     }
 
     fn search_linear(&self, key: &K) -> SearchResult {
         for (i, k) in self.keys().enumerate() {
             match k.cmp(key) {
                 Less => {}, // keep walkin' son, she's too small
-                Equal => return Match(i),
-                Greater => return Recurse(i),
+                Equal => return Found(i),
+                Greater => return GoDown(i),
             }
         }
-        Recurse(self.length)
-    }
-
-    fn search_binary(&self, key: &K) -> SearchResult {
-        let len = self.length;
-        match self.keys.slice_to(len).binary_search(|k| key.cmp(k.as_ref().unwrap())) {
-            Found(i) => Match(i),
-            NotFound(i) => Recurse(i),
-        }
+        GoDown(self.length)
     }
 
     /// Make a leaf root from scratch
