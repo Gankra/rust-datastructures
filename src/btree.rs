@@ -745,9 +745,9 @@ fn shift_and_insert<T>(slice: &mut [T], index: uint, elem: T) {
         let start = slice.as_mut_ptr().offset(index as int);
         let len = slice.len();
         if index < len - 1 {
-            ptr::copy_memory(start.offset(1), start, len - index - 1);
+            ptr::copy_memory(start.offset(1), start as *const _, len - index - 1);
         }
-        ptr::write(start, Some(elem));
+        ptr::write(start, elem);
     }
 }
 
@@ -756,10 +756,10 @@ fn remove_and_shift<T>(slice: &mut [Option<T>], index: uint) -> Option<T> {
     unsafe {
         let first = slice.as_mut_ptr();
         let start = first.offset(index as int);
-        let result = ptr::read(start);
+        let result = ptr::read(start as *const _);
         let len = slice.len();
         if len > 1 && index < len - 1 {
-            ptr::copy_memory(start, start.offset(1), len - index - 1);
+            ptr::copy_memory(start, start.offset(1) as *const _, len - index - 1);
         }
         ptr::write(first.offset((len - 1) as int), None);
         result
