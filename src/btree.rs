@@ -815,44 +815,45 @@ mod test {
     #[test]
     fn test_basic() {
         let mut map = BTree::new();
+        let size = 1000000u;
         assert_eq!(map.len(), 0);
 
-        for i in range(0u, 10000) {
+        for i in range(0, size) {
             assert_eq!(map.swap(i, 10*i), None);
             assert_eq!(map.len(), i + 1);
         }
 
-        for i in range(0u, 10000) {
+        for i in range(0, size) {
             assert_eq!(map.find(&i).unwrap(), &(i*10));
         }
 
-        for i in range(10000, 20000) {
+        for i in range(size, size*2) {
             assert_eq!(map.find(&i), None);
         }
 
-        for i in range(0u, 10000) {
+        for i in range(0, size) {
             assert_eq!(map.swap(i, 100*i), Some(10*i));
-            assert_eq!(map.len(), 10000);
+            assert_eq!(map.len(), size);
         }
 
-        for i in range(0u, 10000) {
+        for i in range(0, size) {
             assert_eq!(map.find(&i).unwrap(), &(i*100));
         }
 
-        for i in range(0u, 5000) {
+        for i in range(0, size/2) {
             assert_eq!(map.pop(&(i*2)), Some(i*200));
-            assert_eq!(map.len(), 10000 - i - 1);
+            assert_eq!(map.len(), size - i - 1);
         }
 
-        for i in range(0u, 5000) {
+        for i in range(0, size/2) {
             assert_eq!(map.find(&(2*i)), None);
             assert_eq!(map.find(&(2*i+1)).unwrap(), &(i*200 + 100));
         }
 
-        for i in range(0u, 5000) {
+        for i in range(0, size/2) {
             assert_eq!(map.pop(&(2*i)), None);
             assert_eq!(map.pop(&(2*i+1)), Some(i*200 + 100));
-            assert_eq!(map.len(), 5000 - i - 1);
+            assert_eq!(map.len(), size/2 - i - 1);
         }
     }
 }
