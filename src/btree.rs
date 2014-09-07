@@ -784,7 +784,8 @@ fn merge<T>(left: &mut[Option<T>], right: &mut[Option<T>]) {
     let left_len = left.len();
     let right_len = right.len();
     for i in range(0, right_len) {
-        left[left_len - right_len + i] = right[i].take();
+        ptr::write(left.as_mut_ptr().offset((left_len - right_len + i) as int)
+            , right.unsafe_get_mut(i).take());
     }
 }
 
