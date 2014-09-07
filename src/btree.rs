@@ -16,7 +16,7 @@
 // License: [CC BY 2.5 CA](http://creativecommons.org/licenses/by/2.5/ca/).
 
 use std::{ptr, mem};
-use std::slice::Items;
+use std::slice::{Items, Found, NotFound};
 
 /// Generate an array of Nones
 macro_rules! nones(
@@ -53,7 +53,7 @@ enum InsertionResult<K,V>{
 
 /// Represents the result of a search for a key in a single node
 enum SearchResult {
-    Found(uint), Bound(uint),
+    Match(uint), Recurse(uint),
 }
 
 /// A B-Tree Node
@@ -98,8 +98,8 @@ impl<K: Ord, V> Map<K,V> for BTree<K,V> {
                 let mut cur_node = &**root;
                 loop {
                     match cur_node.search(key) {
-                        Found(i) => return cur_node.vals[i].as_ref(),
-                        Bound(i) => match cur_node.edges[i].as_ref() {
+                        Match(i) => return cur_node.vals[i].as_ref(),
+                        Recurse(i) => match cur_node.edges[i].as_ref() {
                             None => return None,
                             Some(next_node) => {
                                 cur_node = &**next_node;
@@ -124,8 +124,8 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
                 loop {
                     let cur_node = temp_node;
                     match cur_node.search(key) {
-                        Found(i) => return cur_node.vals[i].as_mut(),
-                        Bound(i) => match cur_node.edges[i].as_mut() {
+                        Match(i) => return cur_node.vals[i].as_mut(),
+                        Recurse(i) => match cur_node.edges[i].as_mut() {
                             None => return None,
                             Some(next_node) => {
                                 temp_node = &mut **next_node;
@@ -195,13 +195,13 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
 
                     // See `find` for a description of this search
                     match cur_node.search(&key) {
-                        Found(i) => {
+                        Match(i) => {
                             // Perfect match, swap the contents and return the old ones
                             mem::swap(cur_node.vals[i].as_mut().unwrap(), &mut value);
                             mem::swap(cur_node.keys[i].as_mut().unwrap(), &mut key);
                             return Some(value);
                         },
-                        Bound(i) => {
+                        Recurse(i) => {
                             visit_stack.push((cur_node_ptr, i));
                             match cur_node.edges[i].as_mut() {
                                 None => {
@@ -279,7 +279,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
 
                     // See `find` for a description of this search
                     match cur_node.search(key) {
-                        Found(i) => {
+                        Match(i) => {
                             // Perfect match. Terminate the stack here, and move to the
                             // next phase (remove_stack).
                             visit_stack.push((cur_node_ptr, i));
@@ -294,7 +294,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
                             }
                             break;
                         },
-                        Bound(i) => match cur_node.edges[i].as_mut() {
+                        Recurse(i) => match cur_node.edges[i].as_mut() {
                             None => return None, // We're at a leaf; the key isn't in this tree
                             Some(next_node) => {
                                 // We've found the subtree the key must be in
@@ -425,18 +425,27 @@ impl<K: Ord, V> Node<K,V> {
     /// `Found` will be yielded with the matching index. If it fails to find an exact match,
     /// `Bound` will be yielded with the index of the subtree the key must lie in.
     fn search(&self, key: &K) -> SearchResult {
-        // linear search the node's keys because we're small
-        // FIXME(Gankro): if we ever get generic integer arguments
-        // to support variable choices of `B`, then this should be
-        // tuned to fall into binary search at some arbitrary level
+        // FIXME(Gankro): Tune when to search linear or binary
+        self.search_binary(key)
+    }
+
+    fn search_linear(&self, key: &K) -> SearchResult {
         for (i, k) in self.keys().enumerate() {
             match k.cmp(key) {
                 Less => {}, // keep walkin' son, she's too small
-                Equal => return Found(i),
-                Greater => return Bound(i),
+                Equal => return Match(i),
+                Greater => return Recurse(i),
             }
         }
-        Bound(self.length)
+        Recurse(self.length)
+    }
+
+    fn search_binary(&self, key: &K) -> SearchResult {
+        let len = self.length;
+        match self.keys.slice_to(len).binary_search(|k| key.cmp(k.as_ref().unwrap())) {
+            Found(i) => Match(i),
+            NotFound(i) => Recurse(i),
+        }
     }
 
     /// Make a leaf root from scratch
@@ -815,7 +824,7 @@ mod test {
     #[test]
     fn test_basic() {
         let mut map = BTree::new();
-        let size = 1000000u;
+        let size = 10000u;
         assert_eq!(map.len(), 0);
 
         for i in range(0, size) {
