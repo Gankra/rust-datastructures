@@ -1,6 +1,7 @@
 #![feature(phase)]
 #![feature(unsafe_destructor)]
 #![feature(default_type_params)]
+#![feature(macro_rules)]
 
 //! A test bed for experimenting with data structures in Rust.
 //!
