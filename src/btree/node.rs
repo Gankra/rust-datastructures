@@ -161,6 +161,20 @@ impl <K,V> Node<K,V> {
         self.length -= 1;
         (key, value)
     }
+
+    /// Handle an underflow in this node's child. We favour handling "to the left" because we know
+    /// we're empty, but our neighbour can be full. Handling to the left means when we choose to
+    /// steal, we pop off the end of our neighbour (always fast) and "unshift" ourselves
+    /// (always slow, but at least faster since we know we're half-empty).
+    /// Handling "to the right" reverses these roles. Of course, we merge whenever possible
+    /// because we want dense nodes, and merging is about equal work regardless of direction.
+    pub fn handle_underflow(&mut self, underflowed_child_index: uint) {
+        if underflowed_child_index > 0 {
+            self.handle_underflow_to_left(underflowed_child_index);
+        } else {
+            self.handle_underflow_to_right(underflowed_child_index);
+        }
+    }
 }
 
 impl<K,V> Node<K,V> {
@@ -206,20 +220,6 @@ impl<K,V> Node<K,V> {
         let val = self.vals[left_len - 1].take().unwrap();
 
         (key, val, right)
-    }
-
-    /// Handle an underflow in this node's child. We favour handling "to the left" because we know
-    /// we're empty, but our neighbour can be full. Handling to the left means when we choose to
-    /// steal, we pop off the end of our neighbour (always fast) and "unshift" ourselves
-    /// (always slow, but at least faster since we know we're half-empty).
-    /// Handling "to the right" reverses these roles. Of course, we merge whenever possible
-    /// because we want dense nodes, and merging is about equal work regardless of direction.
-    pub fn handle_underflow(&mut self, underflowed_child_index: uint) {
-        if underflowed_child_index > 0 {
-            self.handle_underflow_to_left(underflowed_child_index);
-        } else {
-            self.handle_underflow_to_right(underflowed_child_index);
-        }
     }
 
     /// Right is underflowed. Try to steal from left,
