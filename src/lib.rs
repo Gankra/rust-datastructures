@@ -2,6 +2,7 @@
 #![feature(unsafe_destructor)]
 #![feature(default_type_params)]
 #![feature(macro_rules)]
+#![feature(globs)]
 
 //! A test bed for experimenting with data structures in Rust.
 //!
