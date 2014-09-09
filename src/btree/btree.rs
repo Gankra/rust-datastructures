@@ -21,7 +21,7 @@ use super::MIN_LOAD;
 
 /// A B-Tree of Order 6
 pub struct BTree<K,V>{
-    root: Option<Box<Node<K,V>>>,
+    root: Option<Node<K,V>>,
     length: uint,
     depth: uint,
 }
@@ -49,14 +49,14 @@ impl<K: Ord, V> Map<K,V> for BTree<K,V> {
         match self.root.as_ref() {
             None => None,
             Some(root) => {
-                let mut cur_node = &**root;
+                let mut cur_node = root;
                 loop {
                     match cur_node.search(key) {
-                        Found(i) => return cur_node.vals[i].as_ref(),
-                        GoDown(i) => match cur_node.edges[i].as_ref() {
+                        Found(i) => return cur_node.vals.as_slice().get(i),
+                        GoDown(i) => match cur_node.edges.as_slice().get(i) {
                             None => return None,
                             Some(next_node) => {
-                                cur_node = &**next_node;
+                                cur_node = next_node;
                                 continue;
                             }
                         }
@@ -74,15 +74,15 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
             None => None,
             Some(root) => {
                 // temp_node is a Borrowck hack for having a mutable value outlive a loop iteration
-                let mut temp_node = &mut **root;
+                let mut temp_node = root;
                 loop {
                     let cur_node = temp_node;
                     match cur_node.search(key) {
-                        Found(i) => return cur_node.vals[i].as_mut(),
-                        GoDown(i) => match cur_node.edges[i].as_mut() {
+                        Found(i) => return cur_node.vals.as_mut_slice().get_mut(i),
+                        GoDown(i) => match cur_node.edges.as_mut_slice().get_mut(i) {
                             None => return None,
                             Some(next_node) => {
-                                temp_node = &mut **next_node;
+                                temp_node = next_node;
                                 continue;
                             }
                         }
@@ -130,7 +130,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
         } else {
             let visit_stack = {
                 // We need this temp_node for borrowck wrangling
-                let mut temp_node = &mut **self.root.as_mut().unwrap();
+                let mut temp_node = self.root.as_mut().unwrap();
                 // visit_stack is a stack of rawptrs to nodes paired with indices, respectively
                 // representing the nodes and edges of our search path. We have to store rawptrs
                 // because as far as Rust is concerned, we can mutate aliased data with such a
@@ -149,22 +149,22 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
 
                     // See `find` for a description of this search
                     match cur_node.search(&key) {
-                        Found(i) => {
+                        Found(i) => unsafe {
                             // Perfect match, swap the contents and return the old ones
-                            mem::swap(cur_node.vals[i].as_mut().unwrap(), &mut value);
-                            mem::swap(cur_node.keys[i].as_mut().unwrap(), &mut key);
+                            mem::swap(cur_node.vals.as_mut_slice().unsafe_mut_ref(i), &mut value);
+                            mem::swap(cur_node.keys.as_mut_slice().unsafe_mut_ref(i), &mut key);
                             return Some(value);
                         },
                         GoDown(i) => {
                             visit_stack.push((cur_node_ptr, i));
-                            match cur_node.edges[i].as_mut() {
+                            match cur_node.edges.as_mut_slice().get_mut(i) {
                                 None => {
                                     // We've found where to insert this key/value pair
                                     break;
                                 }
                                 Some(next_node) => {
                                     // We've found the subtree to insert this key/value pair in
-                                    temp_node = &mut **next_node;
+                                    temp_node = next_node;
                                     continue;
                                 }
                             }
@@ -223,7 +223,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
         } else {
             let visit_stack = {
                 // We need this temp_node for borrowck wrangling
-                let mut temp_node = &mut **self.root.as_mut().unwrap();
+                let mut temp_node = self.root.as_mut().unwrap();
                 // See `pop` for a description of this variable
                 let mut visit_stack = Vec::with_capacity(self.depth);
 
@@ -238,22 +238,22 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
                             // next phase (remove_stack).
                             visit_stack.push((cur_node_ptr, i));
 
-                            if cur_node.edges[i].is_some() {
+                            if !cur_node.is_leaf() {
                                 // We found the key in an internal node, but that's annoying,
                                 // so let's swap it with a leaf key and pretend we *did* find
-                                // it in a leaf. Note that after calling this, the tree is in an
-                                // inconsistent state, but will be consistent after we remove the
-                                // swapped value in `remove_stack`
+                                // it in a leaf. Note that after calling this, the tree is in
+                                // an inconsistent state, but will be consistent after we
+                                // remove the swapped value in `remove_stack`
                                 leafify_stack(&mut visit_stack);
                             }
                             break;
                         },
-                        GoDown(i) => match cur_node.edges[i].as_mut() {
+                        GoDown(i) => match cur_node.edges.as_mut_slice().get_mut(i) {
                             None => return None, // We're at a leaf; the key isn't in this tree
                             Some(next_node) => {
                                 // We've found the subtree the key must be in
                                 visit_stack.push((cur_node_ptr, i));
-                                temp_node = &mut **next_node;
+                                temp_node = next_node;
                                 continue;
                             }
                         }
@@ -324,7 +324,7 @@ impl<K: Ord, V> BTree<K,V> {
             let (node_ptr, index) = stack.pop().unwrap();
             let node = &mut *node_ptr;
             let (_key, value) = node.remove_as_leaf(index);
-            let underflow = node.length < MIN_LOAD;
+            let underflow = node.len() < MIN_LOAD;
             (value, underflow)
         };
 
@@ -333,11 +333,11 @@ impl<K: Ord, V> BTree<K,V> {
                 None => {
                     // We've reached the root, so no matter what, we're done. We manually access
                     // the root via the tree itself to avoid creating any dangling pointers.
-                    if self.root.as_ref().unwrap().length == 0 {
+                    if self.root.as_ref().unwrap().len() == 0 {
                         // We've emptied out the root, so make its only child the new root.
                         // If the root is a leaf, this will set the root to `None`
                         self.depth -= 1;
-                        self.root = self.root.take().unwrap().edges[0].take();
+                        self.root = self.root.take().unwrap().edges.pop();
                     }
                     return value;
                 }
@@ -347,7 +347,7 @@ impl<K: Ord, V> BTree<K,V> {
                         unsafe {
                             let parent = &mut *parent_ptr;
                             parent.handle_underflow(index);
-                            underflow = parent.length < MIN_LOAD;
+                            underflow = parent.len() < MIN_LOAD;
                         }
                     } else {
                         // All done!
@@ -395,7 +395,7 @@ mod test {
         }
 
         for i in range(0, size) {
-            assert_eq!(map.find(&i).unwrap(), &(i*10));
+            assert_eq!(map.find(&i).expect(format!("f {}", i).as_slice()), &(i*10));
         }
 
         for i in range(size, size*2) {
