@@ -45,7 +45,7 @@ impl<K: Ord, V> Node<K, V> {
     fn search_linear(&self, key: &K) -> SearchResult {
         for (i, k) in self.keys.iter().enumerate() {
             match k.cmp(key) {
-                Less => {}, // keep walkin' son, she's too small
+                Less => {},
                 Equal => return Found(i),
                 Greater => return GoDown(i),
             }
@@ -72,7 +72,7 @@ impl <K, V> Node<K, V> {
         }
     }
 
-    pub fn from_vecs(keys: Vec<K>, vals: Vec<V>, edges: Vec<Node<K, V>>) -> Node<K, V> {
+    fn from_vecs(keys: Vec<K>, vals: Vec<V>, edges: Vec<Node<K, V>>) -> Node<K, V> {
         Node {
             keys: keys,
             vals: vals,
@@ -186,6 +186,29 @@ impl <K, V> Node<K, V> {
             }
         }
     }
+
+    /// Swap the given key-value pair with the key-value pair stored in the node's index,
+    /// without checking bounds.
+    pub unsafe fn unsafe_swap(&mut self, index: uint, key: &mut K, val: &mut V) {
+        mem::swap(self.keys.as_mut_slice().unsafe_mut_ref(index), key);
+        mem::swap(self.vals.as_mut_slice().unsafe_mut_ref(index), val);
+    }
+
+    pub fn val(&self, index: uint) -> Option<&V> {
+        self.vals.as_slice().get(index)
+    }
+
+    pub fn val_mut(&mut self, index: uint) -> Option<&mut V> {
+        self.vals.as_mut_slice().get_mut(index)
+    }
+
+    pub fn edge(&self, index: uint) -> Option<&Node<K,V>> {
+        self.edges.as_slice().get(index)
+    }
+
+    pub fn edge_mut(&mut self, index: uint) -> Option<&mut Node<K,V>> {
+        self.edges.as_mut_slice().get_mut(index)
+    }
 }
 
 impl<K, V> Node<K, V> {
@@ -259,8 +282,7 @@ impl<K, V> Node<K, V> {
         };
 
         // Swap the parent's seperating key-value pair with left's
-        mem::swap(self.keys.as_mut_slice().unsafe_mut_ref(underflowed_child_index - 1), &mut key);
-        mem::swap(self.vals.as_mut_slice().unsafe_mut_ref(underflowed_child_index - 1), &mut val);
+        self.unsafe_swap(underflowed_child_index - 1, &mut key, &mut val);
 
         // Put them at the start of right
         {
@@ -287,8 +309,7 @@ impl<K, V> Node<K, V> {
         };
 
         // Swap the parent's seperating key-value pair with right's
-        mem::swap(self.keys.as_mut_slice().unsafe_mut_ref(underflowed_child_index), &mut key);
-        mem::swap(self.vals.as_mut_slice().unsafe_mut_ref(underflowed_child_index), &mut val);
+        self.unsafe_swap(underflowed_child_index, &mut key, &mut val);
 
         // Put them at the end of left
         {
@@ -328,6 +349,44 @@ impl<K, V> Node<K, V> {
         self.keys.extend(right.keys.move_iter());
         self.vals.extend(right.vals.move_iter());
         self.edges.extend(right.edges.move_iter());
+    }
+}
+
+
+/// Subroutine for removal. Takes a search stack for a key that terminates at an
+/// internal node, and mutates the tree and search stack to make it a search
+/// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
+/// state that must be repaired by the caller by removing the key in question.
+/// In theory, this should be part of BTreeMap, but it it relies on impl details of Node
+pub fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
+    let (node_ptr, index) = stack.pop().unwrap();
+    unsafe {
+        // First, get ptrs to the found key-value pair
+        let node = &mut *node_ptr;
+        let (key_ptr, val_ptr) = {
+            (node.keys.as_mut_slice().unsafe_mut_ref(index) as *mut _,
+             node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
+        };
+
+        // Go into the right subtree of the found key
+        stack.push((node_ptr, index + 1));
+        let mut temp_node = node.edges.as_mut_slice().unsafe_mut_ref(index + 1);
+
+        loop {
+            // Walk into the smallest subtree of this
+            let node = temp_node;
+            let node_ptr = node as *mut _;
+            stack.push((node_ptr, 0));
+            if node.is_leaf() {
+                // This node is a leaf, do the swap and return
+                mem::swap(&mut *key_ptr, node.keys.as_mut_slice().unsafe_mut_ref(0));
+                mem::swap(&mut *val_ptr, node.vals.as_mut_slice().unsafe_mut_ref(0));
+                break;
+            } else {
+                // This node is internal, go deeper
+                temp_node = node.edges.as_mut_slice().unsafe_mut_ref(0);
+            }
+        }
     }
 }
 

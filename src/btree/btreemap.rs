@@ -15,7 +15,6 @@
 // writing (August 2014) freely licensed under the following Creative Commons Attribution
 // License: [CC BY 2.5 CA](http://creativecommons.org/licenses/by/2.5/ca/).
 
-use std::mem;
 use super::node::*;
 use std::hash::{Writer, Hash};
 use std::slice::Items;
@@ -51,7 +50,55 @@ impl<K, V> BTreeMap<K, V> {
         unreachable!() //TODO
     }
 }
+/* TODO
+impl<K: Ord, V> BTreeMap<K, V> {
+    fn search_dual(&self, min: Option<&K>, max: Option<&K>) -> (LCA, LeftStack, RightStack) {
+        assert!(*min < *max);
+        match self.root.as_ref() {
+            None => {} // TODO: handle empty tree
+            Some(root) => {
+                let mut cur_node = root;
+                for (i, k) in cur_node.keys.iter().enumerate() {
+                    match min.map_or(Greater, |min_key| k.cmp(min_key)) {
+                        Less => {},
+                        Equal => {
+                            match max.map_or(Less, |max_key| k.cmp(max_key)) {
+                                Less => {
+                                    // diverge here
+                                }
+                                Equal => {
+                                    // min == max, so our iterator consists of just this value
+                                }
+                                Greater => {
+                                    // min < max, so we cannot have min = k > max
+                                    unreachable!()
+                                }
+                            }
+                        },
+                        Greater => {
+                            match max.map_or(Less, |max_key| k.cmp(max_key)) {
+                                Less => {
+                                    // diverge here
+                                }
+                                Equal => {
+                                    // max wants to stop here, but min wants to proceed
+                                }
+                                Greater => {
+                                    // Both search paths share this ancestor, so proceed
+                                    cur_node = &node.edges[i];
+                                }
+                            }
+                        },
+                    }
+                }
+                // If we get here, everything is smaller than the min bound, so proceed to the last
+                cur_node = &node.edges[node.len()]
+            }
+        }
 
+    }
+}
+*/
 impl<K: Ord, V> Map<K, V> for BTreeMap<K, V> {
     // Searching in a B-Tree is pretty straightforward.
     //
@@ -67,8 +114,8 @@ impl<K: Ord, V> Map<K, V> for BTreeMap<K, V> {
                 let mut cur_node = root;
                 loop {
                     match cur_node.search(key) {
-                        Found(i) => return cur_node.vals.as_slice().get(i),
-                        GoDown(i) => match cur_node.edges.as_slice().get(i) {
+                        Found(i) => return cur_node.val(i),
+                        GoDown(i) => match cur_node.edge(i) {
                             None => return None,
                             Some(next_node) => {
                                 cur_node = next_node;
@@ -93,8 +140,8 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
                 loop {
                     let cur_node = temp_node;
                     match cur_node.search(key) {
-                        Found(i) => return cur_node.vals.as_mut_slice().get_mut(i),
-                        GoDown(i) => match cur_node.edges.as_mut_slice().get_mut(i) {
+                        Found(i) => return cur_node.val_mut(i),
+                        GoDown(i) => match cur_node.edge_mut(i) {
                             None => return None,
                             Some(next_node) => {
                                 temp_node = next_node;
@@ -166,13 +213,12 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
                     match cur_node.search(&key) {
                         Found(i) => unsafe {
                             // Perfect match, swap the contents and return the old ones
-                            mem::swap(cur_node.vals.as_mut_slice().unsafe_mut_ref(i), &mut value);
-                            mem::swap(cur_node.keys.as_mut_slice().unsafe_mut_ref(i), &mut key);
+                            cur_node.unsafe_swap(i, &mut key, &mut value);
                             return Some(value);
                         },
                         GoDown(i) => {
                             visit_stack.push((cur_node_ptr, i));
-                            match cur_node.edges.as_mut_slice().get_mut(i) {
+                            match cur_node.edge_mut(i) {
                                 None => {
                                     // We've found where to insert this key/value pair
                                     break;
@@ -263,7 +309,7 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
                             }
                             break;
                         },
-                        GoDown(i) => match cur_node.edges.as_mut_slice().get_mut(i) {
+                        GoDown(i) => match cur_node.edge_mut(i) {
                             None => return None, // We're at a leaf; the key isn't in this tree
                             Some(next_node) => {
                                 // We've found the subtree the key must be in
@@ -369,42 +415,6 @@ impl<K: Ord, V> BTreeMap<K, V> {
                         return value;
                     }
                 }
-            }
-        }
-    }
-}
-
-/// Subroutine for removal. Takes a search stack for a key that terminates at an
-/// internal node, and mutates the tree and search stack to make it a search
-/// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
-/// state that must be repaired by the caller by removing the key in question.
-pub fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
-    let (node_ptr, index) = stack.pop().unwrap();
-    unsafe {
-        // First, get ptrs to the found key-value pair
-        let node = &mut *node_ptr;
-        let (key_ptr, val_ptr) = {
-            (node.keys.as_mut_slice().unsafe_mut_ref(index) as *mut _,
-             node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
-        };
-
-        // Go into the right subtree of the found key
-        stack.push((node_ptr, index + 1));
-        let mut temp_node = node.edges.as_mut_slice().unsafe_mut_ref(index + 1);
-
-        loop {
-            // Walk into the smallest subtree of this
-            let node = temp_node;
-            let node_ptr = node as *mut _;
-            stack.push((node_ptr, 0));
-            if node.is_leaf() {
-                // This node is a leaf, do the swap and return
-                mem::swap(&mut *key_ptr, node.keys.as_mut_slice().unsafe_mut_ref(0));
-                mem::swap(&mut *val_ptr, node.vals.as_mut_slice().unsafe_mut_ref(0));
-                break;
-            } else {
-                // This node is internal, go deeper
-                temp_node = node.edges.as_mut_slice().unsafe_mut_ref(0);
             }
         }
     }
