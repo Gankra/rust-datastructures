@@ -374,6 +374,42 @@ impl<K: Ord, V> BTreeMap<K, V> {
     }
 }
 
+/// Subroutine for removal. Takes a search stack for a key that terminates at an
+/// internal node, and mutates the tree and search stack to make it a search
+/// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
+/// state that must be repaired by the caller by removing the key in question.
+pub fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
+    let (node_ptr, index) = stack.pop().unwrap();
+    unsafe {
+        // First, get ptrs to the found key-value pair
+        let node = &mut *node_ptr;
+        let (key_ptr, val_ptr) = {
+            (node.keys.as_mut_slice().unsafe_mut_ref(index) as *mut _,
+             node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
+        };
+
+        // Go into the right subtree of the found key
+        stack.push((node_ptr, index + 1));
+        let mut temp_node = node.edges.as_mut_slice().unsafe_mut_ref(index + 1);
+
+        loop {
+            // Walk into the smallest subtree of this
+            let node = temp_node;
+            let node_ptr = node as *mut _;
+            stack.push((node_ptr, 0));
+            if node.is_leaf() {
+                // This node is a leaf, do the swap and return
+                mem::swap(&mut *key_ptr, node.keys.as_mut_slice().unsafe_mut_ref(0));
+                mem::swap(&mut *val_ptr, node.vals.as_mut_slice().unsafe_mut_ref(0));
+                break;
+            } else {
+                // This node is internal, go deeper
+                temp_node = node.edges.as_mut_slice().unsafe_mut_ref(0);
+            }
+        }
+    }
+}
+
 impl<K, V> Collection for BTreeMap<K, V>{
     fn len(&self) -> uint {
         self.length
