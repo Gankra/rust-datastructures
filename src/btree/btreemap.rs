@@ -17,28 +17,41 @@
 
 use std::mem;
 use super::node::*;
+use std::hash::{Writer, Hash};
+use std::slice::Items;
 
 /// A B-Tree
-pub struct BTree<K, V>{
+pub struct BTreeMap<K, V>{
     root: Option<Node<K, V>>,
     length: uint,
     depth: uint,
     b: uint,
 }
 
-impl<K, V> BTree<K, V> {
-    /// Make a new empty BTree
-    pub fn new() -> BTree<K, V> {
-        BTree {
+impl<K, V> BTreeMap<K, V> {
+    /// Make a new empty BTreeMap with a reasonable choice for B
+    pub fn new() -> BTreeMap<K, V> {
+        //FIXME(Gankro): Tune this as a function of size_of<K/V>?
+        BTreeMap::with_b(6)
+    }
+
+    /// Make a new empty BTreeMap with the given B
+    pub fn with_b(b: uint) -> BTreeMap<K, V> {
+        BTreeMap {
             length: 0,
             depth: 0,
             root: None,
-            b: 6, //FIXME(Gankro): Tune this as a function of size_of<K/V>?
+            b: b,
         }
+    }
+
+    /// stub for later
+    pub fn iter<'a>(&'a self) -> Items<'a, (K, V)> {
+        unreachable!() //TODO
     }
 }
 
-impl<K: Ord, V> Map<K, V> for BTree<K, V> {
+impl<K: Ord, V> Map<K, V> for BTreeMap<K, V> {
     // Searching in a B-Tree is pretty straightforward.
     //
     // Start at the root. Try to find the key in the current node. If we find it, return it.
@@ -68,7 +81,7 @@ impl<K: Ord, V> Map<K, V> for BTree<K, V> {
     }
 }
 
-impl<K: Ord, V> MutableMap<K, V> for BTree<K, V> {
+impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     // See `find` for implementation notes, this is basically a copy-paste with mut's added
     fn find_mut(&mut self, key: &K) -> Option<&mut V> {
         match self.root.as_mut() {
@@ -269,7 +282,7 @@ impl<K: Ord, V> MutableMap<K, V> for BTree<K, V> {
     }
 }
 
-impl<K: Ord, V> BTree<K, V> {
+impl<K: Ord, V> BTreeMap<K, V> {
     /// insert the key and value into the top element in the stack, and if that node has to split
     /// recursively insert the split contents into the stack until splits stop. Then replace the
     /// stack back into the tree.
@@ -360,15 +373,15 @@ impl<K: Ord, V> BTree<K, V> {
     }
 }
 
-impl<K, V> Collection for BTree<K, V>{
+impl<K, V> Collection for BTreeMap<K, V>{
     fn len(&self) -> uint {
         self.length
     }
 }
 
-impl<K, V> Mutable for BTree<K, V> {
+impl<K, V> Mutable for BTreeMap<K, V> {
     fn clear(&mut self) {
-        // Note that this will trigger a lot of recursive destructors, but BTrees can't get
+        // Note that this will trigger a lot of recursive destructors, but BTreeMaps can't get
         // very deep, so we won't worry about it for now.
         self.root = None;
         self.length = 0;
@@ -376,17 +389,41 @@ impl<K, V> Mutable for BTree<K, V> {
     }
 }
 
+impl<K: Ord, V> FromIterator<(K, V)> for BTreeMap<K, V> {
+    fn from_iter<T: Iterator<(K, V)>>(iter: T) -> BTreeMap<K, V> {
+        let mut map = BTreeMap::new();
+        map.extend(iter);
+        map
+    }
+}
+
+impl<K: Ord, V> Extendable<(K, V)> for BTreeMap<K, V> {
+    #[inline]
+    fn extend<T: Iterator<(K, V)>>(&mut self, mut iter: T) {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
+    }
+}
+
+impl<S: Writer, K: Ord + Hash<S>, V: Hash<S>> Hash<S> for BTreeMap<K, V> {
+    fn hash(&self, state: &mut S) {
+        for elt in self.iter() {
+            elt.hash(state);
+        }
+    }
+}
 
 
 
 
 #[cfg(test)]
 mod test {
-    use super::BTree;
+    use super::BTreeMap;
 
     #[test]
     fn test_basic() {
-        let mut map = BTree::new();
+        let mut map = BTreeMap::new();
         let size = 10000u;
         assert_eq!(map.len(), 0);
 
@@ -436,7 +473,7 @@ mod test {
 #[cfg(test)]
 mod bench {
     use test::Bencher;
-    use super::BTree;
+    use super::BTreeMap;
 
     use std::rand;
     use std::rand::Rng;
@@ -519,52 +556,52 @@ mod bench {
     // Find seq
     #[bench]
     pub fn insert_rand_100(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         insert_rand_n(100, &mut m, b);
     }
 
     #[bench]
     pub fn insert_rand_10_000(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         insert_rand_n(10_000, &mut m, b);
     }
 
     // Insert seq
     #[bench]
     pub fn insert_seq_100(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         insert_seq_n(100, &mut m, b);
     }
 
     #[bench]
     pub fn insert_seq_10_000(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         insert_seq_n(10_000, &mut m, b);
     }
 
     // Find rand
     #[bench]
     pub fn find_rand_100(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         find_rand_n(100, &mut m, b);
     }
 
     #[bench]
     pub fn find_rand_10_000(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         find_rand_n(10_000, &mut m, b);
     }
 
     // Find seq
     #[bench]
     pub fn find_seq_100(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         find_seq_n(100, &mut m, b);
     }
 
     #[bench]
     pub fn find_seq_10_000(b: &mut Bencher) {
-        let mut m : BTree<uint,uint> = BTree::new();
+        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
         find_seq_n(10_000, &mut m, b);
     }
 }
