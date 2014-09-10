@@ -17,27 +17,28 @@
 
 use std::mem;
 use super::node::*;
-use super::MIN_LOAD;
 
-/// A B-Tree of Order 6
-pub struct BTree<K,V>{
-    root: Option<Node<K,V>>,
+/// A B-Tree
+pub struct BTree<K, V>{
+    root: Option<Node<K, V>>,
     length: uint,
     depth: uint,
+    b: uint,
 }
 
-impl<K,V> BTree<K,V> {
+impl<K, V> BTree<K, V> {
     /// Make a new empty BTree
-    pub fn new() -> BTree<K,V> {
+    pub fn new() -> BTree<K, V> {
         BTree {
             length: 0,
             depth: 0,
             root: None,
+            b: 6, //FIXME(Gankro): Tune this as a function of size_of<K/V>?
         }
     }
 }
 
-impl<K: Ord, V> Map<K,V> for BTree<K,V> {
+impl<K: Ord, V> Map<K, V> for BTree<K, V> {
     // Searching in a B-Tree is pretty straightforward.
     //
     // Start at the root. Try to find the key in the current node. If we find it, return it.
@@ -67,7 +68,7 @@ impl<K: Ord, V> Map<K,V> for BTree<K,V> {
     }
 }
 
-impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
+impl<K: Ord, V> MutableMap<K, V> for BTree<K, V> {
     // See `find` for implementation notes, this is basically a copy-paste with mut's added
     fn find_mut(&mut self, key: &K) -> Option<&mut V> {
         match self.root.as_mut() {
@@ -123,7 +124,7 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
         // If pcwalton's work pans out, this can be made much better!
         // See `find` for a more idealized structure
         if self.root.is_none() {
-            self.root = Some(Node::make_leaf_root(key, value));
+            self.root = Some(Node::make_leaf_root(self.b, key, value));
             self.length += 1;
             self.depth += 1;
             None
@@ -268,20 +269,20 @@ impl<K: Ord, V> MutableMap<K,V> for BTree<K,V> {
     }
 }
 
-impl<K: Ord, V> BTree<K,V> {
+impl<K: Ord, V> BTree<K, V> {
     /// insert the key and value into the top element in the stack, and if that node has to split
     /// recursively insert the split contents into the stack until splits stop. Then replace the
     /// stack back into the tree.
     ///
     /// Assumes that the stack represents a search path from the root to a leaf, and that the
     /// search path is non-empty
-    fn insert_stack(&mut self, mut stack: SearchStack<K,V>, key: K, value: V) {
+    fn insert_stack(&mut self, mut stack: SearchStack<K, V>, key: K, val: V) {
         self.length += 1;
 
         // Insert the key and value into the leaf at the top of the stack
         let (node, index) = stack.pop().unwrap();
         let mut insertion = unsafe {
-            (*node).insert_as_leaf(index, key, value)
+            (*node).insert_as_leaf(index, key, val)
         };
 
         loop {
@@ -291,20 +292,20 @@ impl<K: Ord, V> BTree<K,V> {
                     // inserting now.
                     return;
                 }
-                Split(key, value, right) => match stack.pop() {
+                Split(key, val, right) => match stack.pop() {
                     // The last insertion triggered a split, so get the next element on the
                     // stack to revursively insert the split node into.
                     None => {
                         // The stack was empty; we've split the root, and need to make a new one.
                         let left = self.root.take().unwrap();
-                        self.root = Some(Node::make_internal_root(key, value, left, right));
+                        self.root = Some(Node::make_internal_root(self.b, key, val, left, right));
                         self.depth += 1;
                         return;
                     }
                     Some((node, index)) => {
                         // The stack wasn't empty, do the insertion and recurse
                         unsafe {
-                            insertion = (*node).insert_as_internal(index, key, value, right);
+                            insertion = (*node).insert_as_internal(index, key, val, right);
                         }
                         continue;
                     }
@@ -315,7 +316,7 @@ impl<K: Ord, V> BTree<K,V> {
 
     /// Remove the key and value in the top element of the stack, then handle underflows.
     /// Assumes the stack represents a search path from the root to a leaf.
-    fn remove_stack(&mut self, mut stack: SearchStack<K,V>) -> V {
+    fn remove_stack(&mut self, mut stack: SearchStack<K, V>) -> V {
         self.length -= 1;
 
         // Remove the key-value pair from the leaf, check if the node is underfull, and then
@@ -324,7 +325,7 @@ impl<K: Ord, V> BTree<K,V> {
             let (node_ptr, index) = stack.pop().unwrap();
             let node = &mut *node_ptr;
             let (_key, value) = node.remove_as_leaf(index);
-            let underflow = node.len() < MIN_LOAD;
+            let underflow = node.is_underfull();
             (value, underflow)
         };
 
@@ -347,7 +348,7 @@ impl<K: Ord, V> BTree<K,V> {
                         unsafe {
                             let parent = &mut *parent_ptr;
                             parent.handle_underflow(index);
-                            underflow = parent.len() < MIN_LOAD;
+                            underflow = parent.is_underfull();
                         }
                     } else {
                         // All done!
@@ -359,13 +360,13 @@ impl<K: Ord, V> BTree<K,V> {
     }
 }
 
-impl<K,V> Collection for BTree<K,V>{
+impl<K, V> Collection for BTree<K, V>{
     fn len(&self) -> uint {
         self.length
     }
 }
 
-impl<K,V> Mutable for BTree<K,V> {
+impl<K, V> Mutable for BTree<K, V> {
     fn clear(&mut self) {
         // Note that this will trigger a lot of recursive destructors, but BTrees can't get
         // very deep, so we won't worry about it for now.

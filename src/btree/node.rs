@@ -9,7 +9,6 @@
 // except according to those terms.
 
 use std::mem;
-use super::{CAPACITY, EDGE_CAPACITY, MIN_LOAD, SPLIT_LEN};
 
 /// Represents the result of an Insertion: either the item fit, or the node had to split
 pub enum InsertionResult<K, V>{
@@ -57,18 +56,18 @@ impl<K: Ord, V> Node<K, V> {
 
 impl <K, V> Node<K, V> {
     /// Make a new node
-    pub fn new_internal() -> Node<K, V> {
+    pub fn new_internal(capacity: uint) -> Node<K, V> {
         Node {
-            keys: Vec::with_capacity(CAPACITY),
-            vals: Vec::with_capacity(CAPACITY),
-            edges: Vec::with_capacity(EDGE_CAPACITY),
+            keys: Vec::with_capacity(capacity),
+            vals: Vec::with_capacity(capacity),
+            edges: Vec::with_capacity(capacity + 1),
         }
     }
 
-    pub fn new_leaf() -> Node<K, V> {
+    pub fn new_leaf(capacity: uint) -> Node<K, V> {
         Node {
-            keys: Vec::with_capacity(CAPACITY),
-            vals: Vec::with_capacity(CAPACITY),
+            keys: Vec::with_capacity(capacity),
+            vals: Vec::with_capacity(capacity),
             edges: Vec::new(),
         }
     }
@@ -82,16 +81,16 @@ impl <K, V> Node<K, V> {
     }
 
     /// Make a leaf root from scratch
-    pub fn make_leaf_root(key: K, value: V) -> Node<K, V> {
-        let mut node = Node::new_leaf();
+    pub fn make_leaf_root(b:uint, key: K, value: V) -> Node<K, V> {
+        let mut node = Node::new_leaf(capacity_from_b(b));
         node.insert_fit_as_leaf(0, key, value);
         node
     }
 
     /// Make an internal root from scratch
-    pub fn make_internal_root(key: K, value: V, left: Node<K, V>, right: Node<K, V>)
+    pub fn make_internal_root(b: uint, key: K, value: V, left: Node<K, V>, right: Node<K, V>)
             -> Node<K, V> {
-        let mut node = Node::new_internal();
+        let mut node = Node::new_internal(capacity_from_b(b));
         node.keys.push(key);
         node.vals.push(value);
         node.edges.push(left);
@@ -103,15 +102,26 @@ impl <K, V> Node<K, V> {
         self.keys.len()
     }
 
+    pub fn capacity(&self) -> uint {
+        self.keys.capacity()
+    }
+
     pub fn is_leaf(&self) -> bool {
         self.edges.is_empty()
+    }
+
+    pub fn is_underfull(&self) -> bool {
+        self.len() < min_load_from_capacity(self.capacity())
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.len() == self.capacity()
     }
 
     /// Try to insert this key-value pair at the given index in this internal node
     /// If the node is full, we have to split it.
     pub fn insert_as_leaf(&mut self, index: uint, key: K, value: V) -> InsertionResult<K, V> {
-        let len = self.len();
-        if len < CAPACITY {
+        if !self.is_full() {
             // The element can fit, just insert it
             self.insert_fit_as_leaf(index, key, value);
             Fit
@@ -134,8 +144,7 @@ impl <K, V> Node<K, V> {
     /// If the node is full, we have to split it.
     pub fn insert_as_internal(&mut self, index: uint, key: K, value: V, right: Node<K, V>)
             -> InsertionResult<K, V> {
-        let len = self.len();
-        if len < CAPACITY {
+        if !self.is_full() {
             // The element can fit, just insert it
             self.insert_fit_as_internal(index, key, value, right);
             Fit
@@ -198,12 +207,13 @@ impl<K, V> Node<K, V> {
     /// Node is full, so split it into two nodes, and yield the middle-most key-value pair
     /// because we have one too many, and our parent now has one too few
     fn split(&mut self) -> (K, V, Node<K, V>) {
-        let r_keys = split(&mut self.keys, SPLIT_LEN);
-        let r_vals = split(&mut self.vals, SPLIT_LEN);
+        let split_len = split_len_from_capacity(self.capacity());
+        let r_keys = split(&mut self.keys, split_len);
+        let r_vals = split(&mut self.vals, split_len);
         let r_edges = if self.edges.is_empty() {
             Vec::new()
         } else {
-            split(&mut self.edges, SPLIT_LEN + 1)
+            split(&mut self.edges, split_len + 1)
         };
 
         let right = Node::from_vecs(r_keys, r_vals, r_edges);
@@ -218,7 +228,7 @@ impl<K, V> Node<K, V> {
     /// but merge left and right if left is low too.
     unsafe fn handle_underflow_to_left(&mut self, underflowed_child_index: uint) {
         let left_len = self.edges[underflowed_child_index - 1].len();
-        if left_len > MIN_LOAD {
+        if left_len > min_load_from_capacity(self.capacity()) {
             self.steal_to_left(underflowed_child_index);
         } else {
             self.merge_children(underflowed_child_index - 1);
@@ -229,7 +239,7 @@ impl<K, V> Node<K, V> {
     /// but merge left and right if right is low too.
     unsafe fn handle_underflow_to_right(&mut self, underflowed_child_index: uint) {
         let right_len = self.edges[underflowed_child_index + 1].len();
-        if right_len > MIN_LOAD {
+        if right_len > min_load_from_capacity(self.capacity()) {
             self.steal_to_right(underflowed_child_index);
         } else {
             self.merge_children(underflowed_child_index);
@@ -331,7 +341,8 @@ pub fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
         // First, get ptrs to the found key-value pair
         let node = &mut *node_ptr;
         let (key_ptr, val_ptr) = {
-            (node.keys.as_mut_slice().unsafe_mut_ref(index) as *mut _, node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
+            (node.keys.as_mut_slice().unsafe_mut_ref(index) as *mut _,
+             node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
         };
 
         // Go into the right subtree of the found key
@@ -364,4 +375,18 @@ fn split<T>(left: &mut Vec<T>, amount: uint) -> Vec<T> {
     }
     right.reverse();
     right
+}
+
+fn capacity_from_b(b: uint) -> uint {
+    2 * b - 1
+}
+
+fn min_load_from_capacity(cap: uint) -> uint {
+    // B - 1
+    (cap + 1) / 2 - 1
+}
+
+fn split_len_from_capacity(cap: uint) -> uint {
+    // B - 1
+    (cap + 1) / 2 - 1
 }
