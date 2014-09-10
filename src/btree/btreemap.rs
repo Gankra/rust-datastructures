@@ -19,6 +19,7 @@ use std::mem;
 use super::node::*;
 use std::hash::{Writer, Hash};
 use std::slice::Items;
+use std::default::Default;
 
 /// A B-Tree
 pub struct BTreeMap<K, V>{
@@ -411,6 +412,12 @@ impl<S: Writer, K: Ord + Hash<S>, V: Hash<S>> Hash<S> for BTreeMap<K, V> {
         for elt in self.iter() {
             elt.hash(state);
         }
+    }
+}
+
+impl<K: Ord, V> Default for BTreeMap<K, V> {
+    fn default() -> BTreeMap<K, V> {
+        BTreeMap::new()
     }
 }
 

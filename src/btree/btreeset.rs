@@ -13,6 +13,7 @@
 use super::btreemap::BTreeMap;
 use std::hash::{Writer, Hash};
 use std::slice::Items;
+use std::default::Default;
 
 /// A Set based on a B-Tree
 pub struct BTreeSet<T>{
@@ -113,5 +114,11 @@ impl<S: Writer, T: Ord + Hash<S>> Hash<S> for BTreeSet<T> {
         for elt in self.iter() {
             elt.hash(state);
         }
+    }
+}
+
+impl<T: Ord> Default for BTreeSet<T> {
+    fn default() -> BTreeSet<T> {
+        BTreeSet::new()
     }
 }
