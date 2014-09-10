@@ -440,7 +440,7 @@ mod test {
         }
 
         for i in range(0, size) {
-            assert_eq!(map.find(&i).expect(format!("f {}", i).as_slice()), &(i*10));
+            assert_eq!(map.find(&i).unwrap(), &(i*10));
         }
 
         for i in range(size, size*2) {
