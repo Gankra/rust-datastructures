@@ -368,19 +368,18 @@ pub fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
              node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
         };
 
-        // Go into the right subtree of the found key
+        // Go into the right subtree of the found key to find its successor
         stack.push((node_ptr, index + 1));
         let mut temp_node = node.edges.as_mut_slice().unsafe_mut_ref(index + 1);
 
         loop {
-            // Walk into the smallest subtree of this
+            // Walk into the smallest subtree of this node
             let node = temp_node;
             let node_ptr = node as *mut _;
             stack.push((node_ptr, 0));
             if node.is_leaf() {
                 // This node is a leaf, do the swap and return
-                mem::swap(&mut *key_ptr, node.keys.as_mut_slice().unsafe_mut_ref(0));
-                mem::swap(&mut *val_ptr, node.vals.as_mut_slice().unsafe_mut_ref(0));
+                node.unsafe_swap(0, &mut *key_ptr, &mut *val_ptr);
                 break;
             } else {
                 // This node is internal, go deeper
