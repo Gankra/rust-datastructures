@@ -8,6 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub mod node;
+mod node;
 pub mod btreemap;
 pub mod btreeset;

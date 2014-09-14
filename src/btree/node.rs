@@ -21,14 +21,11 @@ pub enum SearchResult {
     Found(uint), GoDown(uint),
 }
 
-/// Represents a search path for mutating
-pub type SearchStack<K, V> = Vec<(*mut Node<K, V>, uint)>;
-
 /// A B-Tree Node. We keep keys/edges/values separate to optimize searching for keys.
 pub struct Node<K, V> {
-    pub keys: Vec<K>,
-    pub edges: Vec<Node<K, V>>,
-    pub vals: Vec<V>,
+    keys: Vec<K>,
+    edges: Vec<Node<K, V>>,
+    vals: Vec<V>,
 }
 
 impl<K: Ord, V> Node<K, V> {
@@ -36,8 +33,8 @@ impl<K: Ord, V> Node<K, V> {
     /// `Found` will be yielded with the matching index. If it fails to find an exact match,
     /// `Bound` will be yielded with the index of the subtree the key must lie in.
     pub fn search(&self, key: &K) -> SearchResult {
-        // FIXME(Gankro): Tune when to search linear or binary when B becomes configurable.
-        // For the B configured as of this writing (B = 5), binary search was *singnificantly*
+        // FIXME(Gankro): Tune when to search linear or binary based on B (and maybe K/V).
+        // For the B configured as of this writing (B = 6), binary search was *singnificantly*
         // worse.
         self.search_linear(key)
     }
@@ -55,7 +52,7 @@ impl<K: Ord, V> Node<K, V> {
 }
 
 impl <K, V> Node<K, V> {
-    /// Make a new node
+    /// Make a new internal node
     pub fn new_internal(capacity: uint) -> Node<K, V> {
         Node {
             keys: Vec::with_capacity(capacity),
@@ -64,19 +61,12 @@ impl <K, V> Node<K, V> {
         }
     }
 
+    /// Make a new leaf node
     pub fn new_leaf(capacity: uint) -> Node<K, V> {
         Node {
             keys: Vec::with_capacity(capacity),
             vals: Vec::with_capacity(capacity),
             edges: Vec::new(),
-        }
-    }
-
-    fn from_vecs(keys: Vec<K>, vals: Vec<V>, edges: Vec<Node<K, V>>) -> Node<K, V> {
-        Node {
-            keys: keys,
-            vals: vals,
-            edges: edges,
         }
     }
 
@@ -98,24 +88,76 @@ impl <K, V> Node<K, V> {
         node
     }
 
+    /// How many key-value pairs the node contains
     pub fn len(&self) -> uint {
         self.keys.len()
     }
 
+    /// How many key-value pairs the node can fit
     pub fn capacity(&self) -> uint {
         self.keys.capacity()
     }
 
+    /// If the node has any children
     pub fn is_leaf(&self) -> bool {
         self.edges.is_empty()
     }
 
+    /// if the node has two few elements
     pub fn is_underfull(&self) -> bool {
         self.len() < min_load_from_capacity(self.capacity())
     }
 
+    /// if the node cannot fit any more elements
     pub fn is_full(&self) -> bool {
         self.len() == self.capacity()
+    }
+
+    /// Swap the given key-value pair with the key-value pair stored in the node's index,
+    /// without checking bounds.
+    pub unsafe fn unsafe_swap(&mut self, index: uint, key: &mut K, val: &mut V) {
+        mem::swap(self.keys.as_mut_slice().unsafe_mut_ref(index), key);
+        mem::swap(self.vals.as_mut_slice().unsafe_mut_ref(index), val);
+    }
+
+    /// Get the node's key mutably without any bounds checks.
+    pub unsafe fn unsafe_key_mut(&mut self, index: uint) -> &mut K {
+        self.keys.as_mut_slice().unsafe_mut_ref(index)
+    }
+
+    /// Get the node's value at the given index
+    pub fn val(&self, index: uint) -> Option<&V> {
+        self.vals.as_slice().get(index)
+    }
+
+    /// Get the node's value at the given index
+    pub fn val_mut(&mut self, index: uint) -> Option<&mut V> {
+        self.vals.as_mut_slice().get_mut(index)
+    }
+
+    /// Get the node's value mutably without any bounds checks.
+    pub unsafe fn unsafe_val_mut(&mut self, index: uint) -> &mut V {
+        self.vals.as_mut_slice().unsafe_mut_ref(index)
+    }
+
+    /// Get the node's edge at the given index
+    pub fn edge(&self, index: uint) -> Option<&Node<K,V>> {
+        self.edges.as_slice().get(index)
+    }
+
+    /// Get the node's edge mutably at the given index
+    pub fn edge_mut(&mut self, index: uint) -> Option<&mut Node<K,V>> {
+        self.edges.as_mut_slice().get_mut(index)
+    }
+
+    /// Get the node's edge mutably without any bounds checks.
+    pub unsafe fn unsafe_edge_mut(&mut self, index: uint) -> &mut Node<K,V> {
+        self.edges.as_mut_slice().unsafe_mut_ref(index)
+    }
+
+    /// Pop an edge off the end of the node
+    pub fn pop_edge(&mut self) -> Option<Node<K,V>> {
+        self.edges.pop()
     }
 
     /// Try to insert this key-value pair at the given index in this internal node
@@ -186,32 +228,18 @@ impl <K, V> Node<K, V> {
             }
         }
     }
-
-    /// Swap the given key-value pair with the key-value pair stored in the node's index,
-    /// without checking bounds.
-    pub unsafe fn unsafe_swap(&mut self, index: uint, key: &mut K, val: &mut V) {
-        mem::swap(self.keys.as_mut_slice().unsafe_mut_ref(index), key);
-        mem::swap(self.vals.as_mut_slice().unsafe_mut_ref(index), val);
-    }
-
-    pub fn val(&self, index: uint) -> Option<&V> {
-        self.vals.as_slice().get(index)
-    }
-
-    pub fn val_mut(&mut self, index: uint) -> Option<&mut V> {
-        self.vals.as_mut_slice().get_mut(index)
-    }
-
-    pub fn edge(&self, index: uint) -> Option<&Node<K,V>> {
-        self.edges.as_slice().get(index)
-    }
-
-    pub fn edge_mut(&mut self, index: uint) -> Option<&mut Node<K,V>> {
-        self.edges.as_mut_slice().get_mut(index)
-    }
 }
 
 impl<K, V> Node<K, V> {
+    /// Make a node from its raw components
+    fn from_vecs(keys: Vec<K>, vals: Vec<V>, edges: Vec<Node<K, V>>) -> Node<K, V> {
+        Node {
+            keys: keys,
+            vals: vals,
+            edges: edges,
+        }
+    }
+
     /// We have somehow verified that this key-value pair will fit in this internal node,
     /// so insert under that assumption.
     fn insert_fit_as_leaf(&mut self, index: uint, key: K, val: V) {
@@ -274,7 +302,7 @@ impl<K, V> Node<K, V> {
     unsafe fn steal_to_left(&mut self, underflowed_child_index: uint) {
         // Take the biggest stuff off left
         let (mut key, mut val, edge) = {
-            let left = self.edges.as_mut_slice().unsafe_mut_ref(underflowed_child_index - 1);
+            let left = self.unsafe_edge_mut(underflowed_child_index - 1);
             match (left.keys.pop(), left.vals.pop(), left.edges.pop()) {
                 (Some(k), Some(v), e) => (k, v, e),
                 _ => unreachable!(),
@@ -286,7 +314,7 @@ impl<K, V> Node<K, V> {
 
         // Put them at the start of right
         {
-            let right = self.edges.as_mut_slice().unsafe_mut_ref(underflowed_child_index);
+            let right = self.unsafe_edge_mut(underflowed_child_index);
             right.keys.insert(0, key);
             right.vals.insert(0, val);
             match edge {
@@ -301,7 +329,7 @@ impl<K, V> Node<K, V> {
     unsafe fn steal_to_right(&mut self, underflowed_child_index: uint) {
         // Take the smallest stuff off right
         let (mut key, mut val, edge) = {
-            let right = self.edges.as_mut_slice().unsafe_mut_ref(underflowed_child_index + 1);
+            let right = self.unsafe_edge_mut(underflowed_child_index + 1);
             match (right.keys.remove(0), right.vals.remove(0), right.edges.remove(0)) {
                 (Some(k), Some(v), e) => (k, v, e),
                 _ => unreachable!(),
@@ -313,7 +341,7 @@ impl<K, V> Node<K, V> {
 
         // Put them at the end of left
         {
-            let left = self.edges.as_mut_slice().unsafe_mut_ref(underflowed_child_index);
+            let left = self.unsafe_edge_mut(underflowed_child_index);
             left.keys.push(key);
             left.vals.push(val);
             match edge {
@@ -338,7 +366,7 @@ impl<K, V> Node<K, V> {
         };
 
         // Give left right's stuff.
-        let left = self.edges.as_mut_slice().unsafe_mut_ref(left_index);
+        let left = self.unsafe_edge_mut(left_index);
         left.absorb(key, val, right);
     }
 
@@ -349,43 +377,6 @@ impl<K, V> Node<K, V> {
         self.keys.extend(right.keys.move_iter());
         self.vals.extend(right.vals.move_iter());
         self.edges.extend(right.edges.move_iter());
-    }
-}
-
-
-/// Subroutine for removal. Takes a search stack for a key that terminates at an
-/// internal node, and mutates the tree and search stack to make it a search
-/// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
-/// state that must be repaired by the caller by removing the key in question.
-/// In theory, this should be part of BTreeMap, but it it relies on impl details of Node
-pub fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
-    let (node_ptr, index) = stack.pop().unwrap();
-    unsafe {
-        // First, get ptrs to the found key-value pair
-        let node = &mut *node_ptr;
-        let (key_ptr, val_ptr) = {
-            (node.keys.as_mut_slice().unsafe_mut_ref(index) as *mut _,
-             node.vals.as_mut_slice().unsafe_mut_ref(index) as *mut _)
-        };
-
-        // Go into the right subtree of the found key to find its successor
-        stack.push((node_ptr, index + 1));
-        let mut temp_node = node.edges.as_mut_slice().unsafe_mut_ref(index + 1);
-
-        loop {
-            // Walk into the smallest subtree of this node
-            let node = temp_node;
-            let node_ptr = node as *mut _;
-            stack.push((node_ptr, 0));
-            if node.is_leaf() {
-                // This node is a leaf, do the swap and return
-                node.unsafe_swap(0, &mut *key_ptr, &mut *val_ptr);
-                break;
-            } else {
-                // This node is internal, go deeper
-                temp_node = node.edges.as_mut_slice().unsafe_mut_ref(0);
-            }
-        }
     }
 }
 

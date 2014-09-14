@@ -20,6 +20,9 @@ use std::hash::{Writer, Hash};
 use std::slice::Items;
 use std::default::Default;
 
+/// Represents a search path for mutating
+type SearchStack<K, V> = Vec<(*mut Node<K, V>, uint)>;
+
 /// A B-Tree
 pub struct BTreeMap<K, V>{
     root: Option<Node<K, V>>,
@@ -398,7 +401,7 @@ impl<K: Ord, V> BTreeMap<K, V> {
                         // We've emptied out the root, so make its only child the new root.
                         // If the root is a leaf, this will set the root to `None`
                         self.depth -= 1;
-                        self.root = self.root.take().unwrap().edges.pop();
+                        self.root = self.root.take().unwrap().pop_edge();
                     }
                     return value;
                 }
@@ -467,7 +470,40 @@ impl<K: Ord, V> Default for BTreeMap<K, V> {
     }
 }
 
+/// Subroutine for removal. Takes a search stack for a key that terminates at an
+/// internal node, and mutates the tree and search stack to make it a search
+/// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
+/// state that must be repaired by the caller by removing the key in question.
+fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
+    let (node_ptr, index) = stack.pop().unwrap();
+    unsafe {
+        // First, get ptrs to the found key-value pair
+        let node = &mut *node_ptr;
+        let (key_ptr, val_ptr) = {
+            (node.unsafe_key_mut(index) as *mut _,
+             node.unsafe_val_mut(index) as *mut _)
+        };
 
+        // Go into the right subtree of the found key to find its successor
+        stack.push((node_ptr, index + 1));
+        let mut temp_node = node.unsafe_edge_mut(index + 1);
+
+        loop {
+            // Walk into the smallest subtree of this node
+            let node = temp_node;
+            let node_ptr = node as *mut _;
+            stack.push((node_ptr, 0));
+            if node.is_leaf() {
+                // This node is a leaf, do the swap and return
+                node.unsafe_swap(0, &mut *key_ptr, &mut *val_ptr);
+                break;
+            } else {
+                // This node is internal, go deeper
+                temp_node = node.unsafe_edge_mut(0);
+            }
+        }
+    }
+}
 
 
 #[cfg(test)]
