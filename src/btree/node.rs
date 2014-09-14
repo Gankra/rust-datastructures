@@ -8,6 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// This module represents all the internal representation and logic for a B-Tree's node
+// with a safe interface, so that BTreeMap itself does not depend on any of these details.
+
 use std::mem;
 
 /// Represents the result of an Insertion: either the item fit, or the node had to split
@@ -31,7 +34,7 @@ pub struct Node<K, V> {
 impl<K: Ord, V> Node<K, V> {
     /// Searches for the given key in the node. If it finds an exact match,
     /// `Found` will be yielded with the matching index. If it fails to find an exact match,
-    /// `Bound` will be yielded with the index of the subtree the key must lie in.
+    /// `GoDown` will be yielded with the index of the subtree the key must lie in.
     pub fn search(&self, key: &K) -> SearchResult {
         // FIXME(Gankro): Tune when to search linear or binary based on B (and maybe K/V).
         // For the B configured as of this writing (B = 6), binary search was *singnificantly*
@@ -51,6 +54,7 @@ impl<K: Ord, V> Node<K, V> {
     }
 }
 
+// Public interface
 impl <K, V> Node<K, V> {
     /// Make a new internal node
     pub fn new_internal(capacity: uint) -> Node<K, V> {
@@ -220,6 +224,7 @@ impl <K, V> Node<K, V> {
     /// Handling "to the right" reverses these roles. Of course, we merge whenever possible
     /// because we want dense nodes, and merging is about equal work regardless of direction.
     pub fn handle_underflow(&mut self, underflowed_child_index: uint) {
+        assert!(underflowed_child_index < self.len());
         unsafe {
             if underflowed_child_index > 0 {
                 self.handle_underflow_to_left(underflowed_child_index);
@@ -230,6 +235,7 @@ impl <K, V> Node<K, V> {
     }
 }
 
+// Private implementation details
 impl<K, V> Node<K, V> {
     /// Make a node from its raw components
     fn from_vecs(keys: Vec<K>, vals: Vec<V>, edges: Vec<Node<K, V>>) -> Node<K, V> {
@@ -380,8 +386,10 @@ impl<K, V> Node<K, V> {
     }
 }
 
+/// Takes a Vec, and splits the last `amount` elements into a new one
 fn split<T>(left: &mut Vec<T>, amount: uint) -> Vec<T> {
-    // Fixme(Gankro): gross gross gross gross
+    // FIXME(Gankro): gross gross gross gross
+    // Vec should probably have a method for this
     let mut right = Vec::with_capacity(left.capacity());
     for _ in range(0, amount) {
         right.push(left.pop().unwrap());
@@ -390,15 +398,18 @@ fn split<T>(left: &mut Vec<T>, amount: uint) -> Vec<T> {
     right
 }
 
+/// Get the capacity of a node from the order of the parent B-Tree
 fn capacity_from_b(b: uint) -> uint {
     2 * b - 1
 }
 
+/// Get the minimum load of a node from its capacity
 fn min_load_from_capacity(cap: uint) -> uint {
     // B - 1
     (cap + 1) / 2 - 1
 }
 
+/// Get the split length of a node from its capacity
 fn split_len_from_capacity(cap: uint) -> uint {
     // B - 1
     (cap + 1) / 2 - 1
