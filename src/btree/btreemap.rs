@@ -205,7 +205,7 @@ impl<K, V> BTreeMap<K, V> {
     }
 
     /// Get an iterator for moving the entries out of the map
-    pub fn move_iter<'a>(mut self) -> MoveEntries<K, V> {
+    pub fn move_iter<'a>(self) -> MoveEntries<K, V> {
         let depth = self.depth;
         let len = self.len();
         let root = self.root;
@@ -672,6 +672,12 @@ impl<K: Clone, V: Clone> Clone for BTreeMap<K, V> {
     }
 }
 
+impl<K: Ord, V> Index<K, V> for BTreeMap<K, V> {
+    fn index(&self, key: &K) -> &V {
+        self.find(key).expect("no entry found for key")
+    }
+}
+
 /// Subroutine for removal. Takes a search stack for a key that terminates at an
 /// internal node, and mutates the tree and search stack to make it a search
 /// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
@@ -717,6 +723,12 @@ impl<'a, K, V> Iterator<(&'a K, &'a V)> for Entries<'a, K, V> {
     // Our iterator represents two search paths, left and right, to the smallest and largest
     // elements we have yet to yield. lca represents the least common ancestor of these two paths,
     // above-which we should never walk.
+    //
+    // Note that the design of these iterators permits an *arbitrary* initial pair of min and max,
+    // making these arbitrary sub-range iterators. However the logic to construct these paths
+    // effeciently is fairly involved, so this is TODO. The sub-range iterators also wouldn't be
+    // able to accurately predict size, so the iterators would have to be newtyped to not
+    // implement ExactSize.
     fn next(&mut self) -> Option<(&'a K, &'a V)> {
         loop {
             // We want the smallest element, so try to get the top of the left stack
