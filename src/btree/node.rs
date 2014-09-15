@@ -12,6 +12,9 @@
 // with a safe interface, so that BTreeMap itself does not depend on any of these details.
 
 use std::mem;
+use std::slice;
+use std::iter::Zip;
+use std::vec;
 
 /// Represents the result of an Insertion: either the item fit, or the node had to split
 pub enum InsertionResult<K, V>{
@@ -38,7 +41,7 @@ impl<K: Ord, V> Node<K, V> {
     pub fn search(&self, key: &K) -> SearchResult {
         // FIXME(Gankro): Tune when to search linear or binary based on B (and maybe K/V).
         // For the B configured as of this writing (B = 6), binary search was *singnificantly*
-        // worse.
+        // worse for uints.
         self.search_linear(key)
     }
 
@@ -224,13 +227,46 @@ impl <K, V> Node<K, V> {
     /// Handling "to the right" reverses these roles. Of course, we merge whenever possible
     /// because we want dense nodes, and merging is about equal work regardless of direction.
     pub fn handle_underflow(&mut self, underflowed_child_index: uint) {
-        assert!(underflowed_child_index < self.len());
+        assert!(underflowed_child_index <= self.len());
         unsafe {
             if underflowed_child_index > 0 {
                 self.handle_underflow_to_left(underflowed_child_index);
             } else {
                 self.handle_underflow_to_right(underflowed_child_index);
             }
+        }
+    }
+
+    pub fn iter<'a>(&'a self) -> Traversal<'a, K, V> {
+        let is_leaf = self.is_leaf();
+        Traversal {
+            elems: self.keys.as_slice().iter().zip(self.vals.as_slice().iter()),
+            edges: self.edges.as_slice().iter(),
+            head_is_edge: true,
+            tail_is_edge: true,
+            has_edges: !is_leaf,
+        }
+    }
+
+    pub fn mut_iter<'a>(&'a mut self) -> MutTraversal<'a, K, V> {
+        let is_leaf = self.is_leaf();
+        MutTraversal {
+            elems: self.keys.as_slice().iter().zip(self.vals.as_mut_slice().mut_iter()),
+            edges: self.edges.as_mut_slice().mut_iter(),
+            head_is_edge: true,
+            tail_is_edge: true,
+            has_edges: !is_leaf,
+        }
+    }
+
+    pub fn move_iter(self) -> MoveTraversal<K, V> {
+        let is_leaf = self.is_leaf();
+        MoveTraversal {
+            elems: self.keys.move_iter().zip(self.vals.move_iter()),
+            edges: self.edges.move_iter(),
+            head_is_edge: true,
+            tail_is_edge: true,
+            has_edges: !is_leaf,
         }
     }
 }
@@ -413,4 +449,120 @@ fn min_load_from_capacity(cap: uint) -> uint {
 fn split_len_from_capacity(cap: uint) -> uint {
     // B - 1
     (cap + 1) / 2 - 1
+}
+
+pub enum TraversalItem<K, V, E> {
+    Elem(K, V),
+    Edge(E),
+}
+
+pub struct Traversal<'a, K, V> {
+    elems: Zip<slice::Items<'a, K>, slice::Items<'a, V>>,
+    edges: slice::Items<'a, Node<K, V>>,
+    head_is_edge: bool,
+    tail_is_edge: bool,
+    has_edges: bool,
+}
+
+impl<'a, K, V> Iterator<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> for Traversal<'a, K, V> {
+    fn next(&mut self) -> Option<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> {
+        let head_is_edge = self.head_is_edge;
+        self.head_is_edge = !head_is_edge;
+
+        if head_is_edge && self.has_edges {
+            self.edges.next().map(|node| Edge(node))
+        } else {
+            self.elems.next().map(|(k, v)| Elem(k, v))
+        }
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator<TraversalItem<&'a K, &'a V, &'a Node<K, V>>>
+        for Traversal<'a, K, V> {
+
+    fn next_back(&mut self) -> Option<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> {
+        let tail_is_edge = self.tail_is_edge;
+        self.tail_is_edge = !tail_is_edge;
+
+        if tail_is_edge && self.has_edges {
+            self.edges.next_back().map(|node| Edge(node))
+        } else {
+            self.elems.next_back().map(|(k, v)| Elem(k, v))
+        }
+    }
+}
+
+pub struct MutTraversal<'a, K, V> {
+    elems: Zip<slice::Items<'a, K>, slice::MutItems<'a, V>>,
+    edges: slice::MutItems<'a, Node<K, V>>,
+    head_is_edge: bool,
+    tail_is_edge: bool,
+    has_edges: bool,
+}
+
+impl<'a, K, V> Iterator<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>>
+        for MutTraversal<'a, K, V> {
+
+    fn next(&mut self) -> Option<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>> {
+        let head_is_edge = self.head_is_edge;
+        self.head_is_edge = !head_is_edge;
+
+        if head_is_edge && self.has_edges {
+            self.edges.next().map(|node| Edge(node))
+        } else {
+            self.elems.next().map(|(k, v)| Elem(k, v))
+        }
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>>
+        for MutTraversal<'a, K, V> {
+
+    fn next_back(&mut self) -> Option<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>> {
+        let tail_is_edge = self.tail_is_edge;
+        self.tail_is_edge = !tail_is_edge;
+
+        if tail_is_edge && self.has_edges {
+            self.edges.next_back().map(|node| Edge(node))
+        } else {
+            self.elems.next_back().map(|(k, v)| Elem(k, v))
+        }
+    }
+}
+
+pub struct MoveTraversal<K, V> {
+    elems: Zip<vec::MoveItems<K>, vec::MoveItems<V>>,
+    edges: vec::MoveItems<Node<K, V>>,
+    head_is_edge: bool,
+    tail_is_edge: bool,
+    has_edges: bool,
+}
+
+impl<K, V> Iterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversal<K, V> {
+    fn next(&mut self) -> Option<TraversalItem<K, V, Node<K, V>>> {
+        let head_is_edge = self.head_is_edge;
+        self.head_is_edge = !head_is_edge;
+
+        if head_is_edge && self.has_edges {
+            self.edges.next().map(|node| Edge(node))
+        } else {
+            self.elems.next().map(|(k, v)| Elem(k, v))
+        }
+    }
+}
+
+impl<K, V> DoubleEndedIterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversal<K, V> {
+    fn next_back(&mut self) -> Option<TraversalItem<K, V, Node<K, V>>> {
+        unreachable!(); //TODO, patch MoveItems ExactSize
+        /*
+        let tail_is_edge = self.tail_is_edge;
+        self.tail_is_edge = !tail_is_edge;
+
+        if tail_is_edge && self.has_edges {
+            self.edges.next_back().map(|node| Edge(node))
+        } else {
+            self.elems.next_back().map(|(k, v)| Elem(k, v))
+        }
+        */
+    }
 }

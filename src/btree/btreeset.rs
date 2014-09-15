@@ -10,15 +10,19 @@
 
 // This is all pretty trivial
 
-use super::btreemap::BTreeMap;
+use super::btreemap::*;
 use std::hash::{Writer, Hash};
-use std::slice::Items;
 use std::default::Default;
+use std::iter;
+use std::iter::Peekable;
 
 /// A Set based on a B-Tree
 pub struct BTreeSet<T>{
     map: BTreeMap<T, ()>,
 }
+
+pub type Items<'a, T> = iter::Map<'a, (&'a T, &'a ()), &'a T, Entries<'a, T, ()>>;
+pub type MoveItems<T> = iter::Map<'static, (T, ()), T, MoveEntries<T, ()>>;
 
 impl<T: Ord> BTreeSet<T> {
     pub fn new() -> BTreeSet<T> {
@@ -29,9 +33,34 @@ impl<T: Ord> BTreeSet<T> {
         BTreeSet { map: BTreeMap::with_b(b) }
     }
 
-    /// stub
     pub fn iter<'a>(&'a self) -> Items<'a, T> {
-        unreachable!(); //TODO
+        self.map.keys()
+    }
+
+    pub fn move_iter(self) -> MoveItems<T> {
+        self.map.move_iter().map(|(k, _)| k)
+    }
+
+    /// Visits the values representing the difference, in ascending order.
+    pub fn difference<'a>(&'a self, other: &'a BTreeSet<T>) -> DifferenceItems<'a, T> {
+        DifferenceItems{a: self.iter().peekable(), b: other.iter().peekable()}
+    }
+
+    /// Visits the values representing the symmetric difference, in ascending order.
+    pub fn symmetric_difference<'a>(&'a self, other: &'a BTreeSet<T>)
+        -> SymDifferenceItems<'a, T> {
+        SymDifferenceItems{a: self.iter().peekable(), b: other.iter().peekable()}
+    }
+
+    /// Visits the values representing the intersection, in ascending order.
+    pub fn intersection<'a>(&'a self, other: &'a BTreeSet<T>)
+        -> IntersectionItems<'a, T> {
+        IntersectionItems{a: self.iter().peekable(), b: other.iter().peekable()}
+    }
+
+    /// Visits the values representing the union, in ascending order.
+    pub fn union<'a>(&'a self, other: &'a BTreeSet<T>) -> UnionItems<'a, T> {
+        UnionItems{a: self.iter().peekable(), b: other.iter().peekable()}
     }
 }
 
@@ -53,7 +82,7 @@ impl<T: Ord> Set<T> for BTreeSet<T> {
     }
 
     fn is_disjoint(&self, other: &BTreeSet<T>) -> bool {
-        unreachable!() //TODO
+        self.intersection(other).next().is_none()
     }
 
     fn is_subset(&self, other: &BTreeSet<T>) -> bool {
@@ -120,5 +149,93 @@ impl<S: Writer, T: Ord + Hash<S>> Hash<S> for BTreeSet<T> {
 impl<T: Ord> Default for BTreeSet<T> {
     fn default() -> BTreeSet<T> {
         BTreeSet::new()
+    }
+}
+
+/// A lazy iterator producing elements in the set difference (in-order).
+pub struct DifferenceItems<'a, T> {
+    a: Peekable<&'a T, Items<'a, T>>,
+    b: Peekable<&'a T, Items<'a, T>>,
+}
+
+/// A lazy iterator producing elements in the set symmetric difference (in-order).
+pub struct SymDifferenceItems<'a, T> {
+    a: Peekable<&'a T, Items<'a, T>>,
+    b: Peekable<&'a T, Items<'a, T>>,
+}
+
+/// A lazy iterator producing elements in the set intersection (in-order).
+pub struct IntersectionItems<'a, T> {
+    a: Peekable<&'a T, Items<'a, T>>,
+    b: Peekable<&'a T, Items<'a, T>>,
+}
+
+/// A lazy iterator producing elements in the set union (in-order).
+pub struct UnionItems<'a, T> {
+    a: Peekable<&'a T, Items<'a, T>>,
+    b: Peekable<&'a T, Items<'a, T>>,
+}
+
+/// Compare `x` and `y`, but return `short` if x is None and `long` if y is None
+fn cmp_opt<T: Ord>(x: Option<&T>, y: Option<&T>,
+                        short: Ordering, long: Ordering) -> Ordering {
+    match (x, y) {
+        (None    , _       ) => short,
+        (_       , None    ) => long,
+        (Some(x1), Some(y1)) => x1.cmp(y1),
+    }
+}
+
+impl<'a, T: Ord> Iterator<&'a T> for DifferenceItems<'a, T> {
+    fn next(&mut self) -> Option<&'a T> {
+        loop {
+            match cmp_opt(self.a.peek(), self.b.peek(), Less, Less) {
+                Less    => return self.a.next(),
+                Equal   => { self.a.next(); self.b.next(); }
+                Greater => { self.b.next(); }
+            }
+        }
+    }
+}
+
+impl<'a, T: Ord> Iterator<&'a T> for SymDifferenceItems<'a, T> {
+    fn next(&mut self) -> Option<&'a T> {
+        loop {
+            match cmp_opt(self.a.peek(), self.b.peek(), Greater, Less) {
+                Less    => return self.a.next(),
+                Equal   => { self.a.next(); self.b.next(); }
+                Greater => return self.b.next(),
+            }
+        }
+    }
+}
+
+impl<'a, T: Ord> Iterator<&'a T> for IntersectionItems<'a, T> {
+    fn next(&mut self) -> Option<&'a T> {
+        loop {
+            let o_cmp = match (self.a.peek(), self.b.peek()) {
+                (None    , _       ) => None,
+                (_       , None    ) => None,
+                (Some(a1), Some(b1)) => Some(a1.cmp(b1)),
+            };
+            match o_cmp {
+                None          => return None,
+                Some(Less)    => { self.a.next(); }
+                Some(Equal)   => { self.b.next(); return self.a.next() }
+                Some(Greater) => { self.b.next(); }
+            }
+        }
+    }
+}
+
+impl<'a, T: Ord> Iterator<&'a T> for UnionItems<'a, T> {
+    fn next(&mut self) -> Option<&'a T> {
+        loop {
+            match cmp_opt(self.a.peek(), self.b.peek(), Greater, Less) {
+                Less    => return self.a.next(),
+                Equal   => { self.b.next(); return self.a.next() }
+                Greater => return self.b.next(),
+            }
+        }
     }
 }

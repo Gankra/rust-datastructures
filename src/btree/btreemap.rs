@@ -17,19 +17,42 @@
 
 use super::node::*;
 use std::hash::{Writer, Hash};
-use std::slice::Items;
 use std::default::Default;
+use std::collections::{Deque, RingBuf};
+use std::iter;
 
 /// Represents a search path for mutating
 type SearchStack<K, V> = Vec<(*mut Node<K, V>, uint)>;
 
 /// A B-Tree
-pub struct BTreeMap<K, V>{
+pub struct BTreeMap<K, V> {
     root: Option<Node<K, V>>,
     length: uint,
     depth: uint,
     b: uint,
 }
+
+pub struct Entries<'a, K, V> {
+    lca: Traversal<'a, K, V>,
+    left: RingBuf<Traversal<'a, K, V>>,
+    right: RingBuf<Traversal<'a, K, V>>,
+    size: uint,
+}
+
+pub struct MutEntries<'a, K, V> {
+    lca: MutTraversal<'a, K, V>,
+    left: RingBuf<MutTraversal<'a, K, V>>,
+    right: RingBuf<MutTraversal<'a, K, V>>,
+    size: uint,
+}
+
+pub struct MoveEntries<K, V> {
+    lca: MoveTraversal<K, V>,
+    left: RingBuf<MoveTraversal<K, V>>,
+    right: RingBuf<MoveTraversal<K, V>>,
+    size: uint,
+}
+
 
 impl<K, V> BTreeMap<K, V> {
     /// Make a new empty BTreeMap with a reasonable choice for B
@@ -48,60 +71,217 @@ impl<K, V> BTreeMap<K, V> {
         }
     }
 
-    /// stub for later
-    pub fn iter<'a>(&'a self) -> Items<'a, (K, V)> {
-        unreachable!() //TODO
-    }
-}
-/* TODO
-impl<K: Ord, V> BTreeMap<K, V> {
-    fn search_dual(&self, min: Option<&K>, max: Option<&K>) -> (LCA, LeftStack, RightStack) {
-        assert!(*min < *max);
+    /// Get an iterator over the entries of the map
+    fn iter<'a>(&'a self) -> Entries<'a, K, V> {
+        let len = self.len();
         match self.root.as_ref() {
-            None => {} // TODO: handle empty tree
+            None => unreachable!(), //TODO
             Some(root) => {
-                let mut cur_node = root;
-                for (i, k) in cur_node.keys.iter().enumerate() {
-                    match min.map_or(Greater, |min_key| k.cmp(min_key)) {
-                        Less => {},
-                        Equal => {
-                            match max.map_or(Less, |max_key| k.cmp(max_key)) {
-                                Less => {
-                                    // diverge here
-                                }
-                                Equal => {
-                                    // min == max, so our iterator consists of just this value
-                                }
-                                Greater => {
-                                    // min < max, so we cannot have min = k > max
-                                    unreachable!()
+                let is_leaf = root.is_leaf();
+                let mut lca = root.iter();
+                if is_leaf {
+                    // root is a leaf, iterator is just the root's iterator
+                    Entries {
+                        lca: lca,
+                        left: RingBuf::new(),
+                        right: RingBuf::new(),
+                        size: len,
+                    }
+                } else {
+                    // root is internal, search for the min and max elements in the tree
+                    let mut left = RingBuf::new();
+                    let mut right = RingBuf::new();
+                    match (lca.next(), lca.next_back()) {
+                        (Some(Edge(mut left_child)), Some(Edge(mut right_child))) => {
+                            // Walk to the smallest element in the tree
+                            loop {
+                                let is_leaf = left_child.is_leaf();
+                                let mut iter = left_child.iter();
+                                if is_leaf {
+                                    left.push(iter);
+                                    break;
+                                } else {
+                                    left_child = match iter.next() {
+                                        Some(Edge(next)) => next,
+                                        _ => unreachable!(),
+                                    };
+                                    left.push(iter);
                                 }
                             }
-                        },
-                        Greater => {
-                            match max.map_or(Less, |max_key| k.cmp(max_key)) {
-                                Less => {
-                                    // diverge here
-                                }
-                                Equal => {
-                                    // max wants to stop here, but min wants to proceed
-                                }
-                                Greater => {
-                                    // Both search paths share this ancestor, so proceed
-                                    cur_node = &node.edges[i];
+                            // Walk to the largest element in the tree
+                            loop {
+                                let is_leaf = right_child.is_leaf();
+                                let mut iter = right_child.iter();
+                                if is_leaf {
+                                    right.push(iter);
+                                    break;
+                                } else {
+                                    right_child = match iter.next_back() {
+                                        Some(Edge(next)) => next,
+                                        _ => unreachable!(),
+                                    };
+                                    right.push(iter);
                                 }
                             }
-                        },
+                            Entries {
+                                lca: lca,
+                                left: left,
+                                right: right,
+                                size: len,
+                            }
+                        }
+                        _ => unreachable!()
                     }
                 }
-                // If we get here, everything is smaller than the min bound, so proceed to the last
-                cur_node = &node.edges[node.len()]
             }
         }
+    }
 
+    /// Get a mutable iterator over the entries of the map
+    pub fn mut_iter<'a>(&'a mut self) -> MutEntries<'a, K, V> {
+        let len = self.len();
+        match self.root.as_mut() {
+            None => unreachable!(), //TODO
+            Some(root) => {
+                let is_leaf = root.is_leaf();
+                let mut lca = root.mut_iter();
+                if is_leaf {
+                    // root is a leaf, iterator is just the root's iterator
+                    MutEntries {
+                        lca: lca,
+                        left: RingBuf::new(),
+                        right: RingBuf::new(),
+                        size: len,
+                    }
+                } else {
+                    // root is internal, search for the min and max elements in the tree
+                    let mut left = RingBuf::new();
+                    let mut right = RingBuf::new();
+                    match (lca.next(), lca.next_back()) {
+                        (Some(Edge(mut temp_left_child)), Some(Edge(mut temp_right_child))) => {
+                            // Walk to the smallest element in the tree
+                            loop {
+                                let left_child = temp_left_child;
+                                let is_leaf = left_child.is_leaf();
+                                let mut iter = left_child.mut_iter();
+                                if is_leaf {
+                                    left.push(iter);
+                                    break;
+                                } else {
+                                    temp_left_child = match iter.next() {
+                                        Some(Edge(next)) => next,
+                                        _ => unreachable!(),
+                                    };
+                                    left.push(iter);
+                                }
+                            }
+                            // Walk to the largest element in the tree
+                            loop {
+                                let right_child = temp_right_child;
+                                let is_leaf = right_child.is_leaf();
+                                let mut iter = right_child.mut_iter();
+                                if is_leaf {
+                                    right.push(iter);
+                                    break;
+                                } else {
+                                    temp_right_child = match iter.next_back() {
+                                        Some(Edge(next)) => next,
+                                        _ => unreachable!(),
+                                    };
+                                    right.push(iter);
+                                }
+                            }
+                            MutEntries {
+                                lca: lca,
+                                left: left,
+                                right: right,
+                                size: len,
+                            }
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get an iterator for moving the entries out of the map
+    pub fn move_iter<'a>(mut self) -> MoveEntries<K, V> {
+        let len = self.len();
+        match self.root.take() {
+            None => unreachable!(), //TODO
+            Some(root) => {
+                let is_leaf = root.is_leaf();
+                let mut lca = root.move_iter();
+                if is_leaf {
+                    // root is a leaf, iterator is just the root's iterator
+                    MoveEntries {
+                        lca: lca,
+                        left: RingBuf::new(),
+                        right: RingBuf::new(),
+                        size: len,
+                    }
+                } else {
+                    // root is internal, search for the min and max elements in the tree
+                    let mut left = RingBuf::new();
+                    let mut right = RingBuf::new();
+                    match (lca.next(), lca.next_back()) {
+                        (Some(Edge(mut left_child)), Some(Edge(mut right_child))) => {
+                            // Walk to the smallest element in the tree
+                            loop {
+                                let is_leaf = left_child.is_leaf();
+                                let mut iter = left_child.move_iter();
+                                if is_leaf {
+                                    left.push(iter);
+                                    break;
+                                } else {
+                                    left_child = match iter.next() {
+                                        Some(Edge(next)) => next,
+                                        _ => unreachable!(),
+                                    };
+                                    left.push(iter);
+                                }
+                            }
+                            // Walk to the largest element in the tree
+                            loop {
+                                let is_leaf = right_child.is_leaf();
+                                let mut iter = right_child.move_iter();
+                                if is_leaf {
+                                    right.push(iter);
+                                    break;
+                                } else {
+                                    right_child = match iter.next_back() {
+                                        Some(Edge(next)) => next,
+                                        _ => unreachable!(),
+                                    };
+                                    right.push(iter);
+                                }
+                            }
+                            MoveEntries {
+                                lca: lca,
+                                left: left,
+                                right: right,
+                                size: len,
+                            }
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get an iterator over the keys of the map
+    pub fn keys<'a>(&'a self) -> iter::Map<'a, (&'a K, &'a V), &'a K, Entries<'a, K, V>> {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Get an iterator over the values of the map
+    pub fn values<'a>(&'a self) -> iter::Map<'a, (&'a K, &'a V), &'a V, Entries<'a, K, V>> {
+        self.iter().map(|(_, v)| v)
     }
 }
-*/
+
 impl<K: Ord, V> Map<K, V> for BTreeMap<K, V> {
     // Searching in a B-Tree is pretty straightforward.
     //
@@ -505,6 +685,328 @@ fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
     }
 }
 
+enum StackOp<T> {
+    Push(T),
+    Pop,
+}
+
+impl<'a, K, V> Iterator<(&'a K, &'a V)> for Entries<'a, K, V> {
+    // This function is pretty long, but only because there's a lot of cases to consider.
+    // Our iterator represents two search paths, left and right, to the smallest and largest
+    // elements we have yet to yield. lca represents the least common ancestor of these two paths,
+    // above-which we should never walk.
+    fn next(&mut self) -> Option<(&'a K, &'a V)> {
+        loop {
+            // We want the smallest element, so try to get the top of the left stack
+            let op = match self.left.back_mut() {
+                // The left stack is empty, so try to get the next element of the two paths
+                // LCAs (the left search path is currently a subpath of the right one)
+                None => match self.lca.next() {
+                    // The lca has been exhausted, walk further down the right path
+                    None => match self.right.pop_front() {
+                        // The right path is exhausted, so we're done
+                        None => return None,
+                        // The right path had something, make that the new LCA
+                        // and restart the whole process
+                        Some(right) => {
+                            self.lca = right;
+                            continue;
+                        }
+                    },
+                    // The lca yielded an edge, make that the new head of the left path
+                    Some(Edge(next)) => {
+                        Push(next.iter())
+                    },
+                    // The lca yielded an entry, so yield that
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                },
+                // The left stack wasn't empty, so continue along the node in its head
+                Some(iter) => match iter.next() {
+                    // The head of the left path is empty, so Pop it off and restart the process
+                    None => {
+                        Pop
+                    },
+                    // The head of the left path yielded an edge, so make that the new head
+                    // of the left path
+                    Some(Edge(next)) => {
+                        Push(next.iter())
+                    },
+                    // The head of the left path yielded entry, so yield that
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                }
+            };
+
+            // Handle any operation on the left stack as necessary
+            match op {
+                Push(item) => {
+                    self.left.push(item);
+                },
+                Pop => {
+                    self.left.pop();
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (uint, Option<uint>) {
+        (self.size, Some(self.size))
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator<(&'a K, &'a V)> for Entries<'a, K, V> {
+    // See Entry's impl for details, next_back is totally symmetric to next
+    fn next_back(&mut self) -> Option<(&'a K, &'a V)> {
+        loop {
+            let op = match self.right.back_mut() {
+                None => match self.lca.next_back() {
+                    None => match self.left.pop_front() {
+                        None => return None,
+                        Some(left) => {
+                            self.lca = left;
+                            continue;
+                        }
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                },
+                Some(iter) => match iter.next_back() {
+                    None => {
+                        Pop
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                }
+            };
+
+            match op {
+                Push(item) => {
+                    self.right.push(item);
+                },
+                Pop => {
+                    self.right.pop();
+                }
+            }
+        }
+    }
+}
+
+impl<'a, K, V> ExactSize<(&'a K, &'a V)> for Entries<'a, K, V> {}
+
+impl<'a, K, V> Iterator<(&'a K, &'a mut V)> for MutEntries<'a, K, V> {
+    // See Entry's impl for details
+    fn next(&mut self) -> Option<(&'a K, &'a mut V)> {
+        loop {
+            let op = match self.left.back_mut() {
+                None => match self.lca.next() {
+                    None => match self.right.pop_front() {
+                        None => return None,
+                        Some(right) => {
+                            self.lca = right;
+                            continue;
+                        }
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.mut_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                },
+                Some(iter) => match iter.next() {
+                    None => {
+                        Pop
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.mut_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                }
+            };
+
+            match op {
+                Push(item) => {
+                    self.left.push(item);
+                },
+                Pop => {
+                    self.left.pop();
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (uint, Option<uint>) {
+        (self.size, Some(self.size))
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator<(&'a K, &'a mut V)> for MutEntries<'a, K, V> {
+    // See Entry's impl for details
+    fn next_back(&mut self) -> Option<(&'a K, &'a mut V)> {
+        loop {
+            let op = match self.right.back_mut() {
+                None => match self.lca.next_back() {
+                    None => match self.left.pop_front() {
+                        None => return None,
+                        Some(left) => {
+                            self.lca = left;
+                            continue;
+                        }
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.mut_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                },
+                Some(iter) => match iter.next_back() {
+                    None => {
+                        Pop
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.mut_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                }
+            };
+
+            match op {
+                Push(item) => {
+                    self.right.push(item);
+                },
+                Pop => {
+                    self.right.pop();
+                }
+            }
+        }
+    }
+}
+
+impl<'a, K, V> ExactSize<(&'a K, &'a mut V)> for MutEntries<'a, K, V> {}
+
+impl<K, V> Iterator<(K, V)> for MoveEntries<K, V> {
+    // See Entry's impl for details
+    fn next(&mut self) -> Option<(K, V)> {
+        loop {
+            let op = match self.left.back_mut() {
+                None => match self.lca.next() {
+                    None => match self.right.pop_front() {
+                        None => return None,
+                        Some(right) => {
+                            self.lca = right;
+                            continue;
+                        }
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.move_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                },
+                Some(iter) => match iter.next() {
+                    None => {
+                        Pop
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.move_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                }
+            };
+
+            match op {
+                Push(item) => {
+                    self.left.push(item);
+                },
+                Pop => {
+                    self.left.pop();
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (uint, Option<uint>) {
+        (self.size, Some(self.size))
+    }
+}
+
+impl<K, V> DoubleEndedIterator<(K, V)> for MoveEntries<K, V> {
+    // See Entry's impl for details
+    fn next_back(&mut self) -> Option<(K, V)> {
+        loop {
+            let op = match self.right.back_mut() {
+                None => match self.lca.next_back() {
+                    None => match self.left.pop_front() {
+                        None => return None,
+                        Some(left) => {
+                            self.lca = left;
+                            continue;
+                        }
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.move_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                },
+                Some(iter) => match iter.next_back() {
+                    None => {
+                        Pop
+                    },
+                    Some(Edge(next)) => {
+                        Push(next.move_iter())
+                    },
+                    Some(Elem(k, v)) => {
+                        self.size -= 1;
+                        return Some((k, v))
+                    }
+                }
+            };
+
+            match op {
+                Push(item) => {
+                    self.right.push(item);
+                },
+                Pop => {
+                    self.right.pop();
+                }
+            }
+        }
+    }
+}
+
+impl<K, V> ExactSize<(K, V)> for MoveEntries<K, V> {}
 
 #[cfg(test)]
 mod test {
@@ -554,9 +1056,20 @@ mod test {
             assert_eq!(map.len(), size/2 - i - 1);
         }
     }
+
+    #[test]
+    fn test_iter() {
+        let mut map: BTreeMap<uint, uint> = Vec::from_fn(10000, |i| (i, i)).move_iter().collect();
+
+        for (i, x) in map.iter().enumerate() {
+            assert_eq!(x, (&i, &i));
+        }
+
+        for (i, x) in map.mut_iter().enumerate() {
+            assert_eq!(x, (&i, &mut (i + 0)));
+        }
+    }
 }
-
-
 
 
 #[cfg(test)]
