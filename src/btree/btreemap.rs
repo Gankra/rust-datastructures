@@ -20,6 +20,8 @@ use std::hash::{Writer, Hash};
 use std::default::Default;
 use std::collections::{Deque, RingBuf};
 use std::iter;
+use std::fmt;
+use std::fmt::Show;
 
 /// Represents a search path for mutating
 type SearchStack<K, V> = Vec<(*mut Node<K, V>, uint)>;
@@ -647,6 +649,42 @@ impl<S: Writer, K: Ord + Hash<S>, V: Hash<S>> Hash<S> for BTreeMap<K, V> {
 impl<K: Ord, V> Default for BTreeMap<K, V> {
     fn default() -> BTreeMap<K, V> {
         BTreeMap::new()
+    }
+}
+
+impl<K: PartialEq + Ord, V: PartialEq> PartialEq for BTreeMap<K, V> {
+    fn eq(&self, other: &BTreeMap<K, V>) -> bool {
+        self.len() == other.len() &&
+            self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl<K: Eq + Ord, V: Eq> Eq for BTreeMap<K, V> {}
+
+impl<K: Ord, V: PartialOrd> PartialOrd for BTreeMap<K, V> {
+    #[inline]
+    fn partial_cmp(&self, other: &BTreeMap<K, V>) -> Option<Ordering> {
+        iter::order::partial_cmp(self.iter(), other.iter())
+    }
+}
+
+impl<K: Ord, V: Ord> Ord for BTreeMap<K, V> {
+    #[inline]
+    fn cmp(&self, other: &BTreeMap<K, V>) -> Ordering {
+        iter::order::cmp(self.iter(), other.iter())
+    }
+}
+
+impl<K: Ord + Show, V: Show> Show for BTreeMap<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "{{"));
+
+        for (i, (k, v)) in self.iter().enumerate() {
+            if i != 0 { try!(write!(f, ", ")); }
+            try!(write!(f, "{}: {}", *k, *v));
+        }
+
+        write!(f, "}}")
     }
 }
 

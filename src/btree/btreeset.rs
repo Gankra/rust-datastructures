@@ -15,6 +15,8 @@ use std::hash::{Writer, Hash};
 use std::default::Default;
 use std::iter;
 use std::iter::Peekable;
+use std::fmt;
+use std::fmt::Show;
 
 /// A Set based on a B-Tree
 pub struct BTreeSet<T>{
@@ -149,6 +151,40 @@ impl<S: Writer, T: Ord + Hash<S>> Hash<S> for BTreeSet<T> {
 impl<T: Ord> Default for BTreeSet<T> {
     fn default() -> BTreeSet<T> {
         BTreeSet::new()
+    }
+}
+
+impl<T: PartialEq + Ord> PartialEq for BTreeSet<T> {
+    #[inline]
+    fn eq(&self, other: &BTreeSet<T>) -> bool { self.map == other.map }
+}
+
+impl<T: Eq + Ord> Eq for BTreeSet<T> {}
+
+impl<T: Ord> PartialOrd for BTreeSet<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &BTreeSet<T>) -> Option<Ordering> {
+        self.map.partial_cmp(&other.map)
+    }
+}
+
+impl<T: Ord> Ord for BTreeSet<T> {
+    #[inline]
+    fn cmp(&self, other: &BTreeSet<T>) -> Ordering {
+        iter::order::cmp(self.iter(), other.iter())
+    }
+}
+
+impl<T: Ord + Show> Show for BTreeSet<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "{{"));
+
+        for (i, x) in self.iter().enumerate() {
+            if i != 0 { try!(write!(f, ", ")); }
+            try!(write!(f, "{}", *x));
+        }
+
+        write!(f, "}}")
     }
 }
 
