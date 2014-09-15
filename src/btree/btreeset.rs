@@ -8,7 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This is all pretty trivial
+// This is pretty much entirely stolen from TreeSet, since BTreeMap has an identical interface
+// to TreeMap
 
 use super::btreemap::*;
 use std::hash::{Writer, Hash};
@@ -27,18 +28,22 @@ pub type Items<'a, T> = iter::Map<'a, (&'a T, &'a ()), &'a T, Entries<'a, T, ()>
 pub type MoveItems<T> = iter::Map<'static, (T, ()), T, MoveEntries<T, ()>>;
 
 impl<T: Ord> BTreeSet<T> {
+    /// Makes a new BTreeSet with a reasonable choice of B
     pub fn new() -> BTreeSet<T> {
         BTreeSet { map: BTreeMap::new() }
     }
 
+    /// Makes a new BTreeSet with the given B
     pub fn with_b(b: uint) -> BTreeSet<T> {
         BTreeSet { map: BTreeMap::with_b(b) }
     }
 
+    /// Gets an iterator over the Set's contents
     pub fn iter<'a>(&'a self) -> Items<'a, T> {
         self.map.keys()
     }
 
+    /// Gets an iterator for moving out the Set's contents
     pub fn move_iter(self) -> MoveItems<T> {
         self.map.move_iter().map(|(k, _)| k)
     }
