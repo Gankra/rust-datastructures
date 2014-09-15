@@ -22,13 +22,14 @@ use std::collections::{Deque, RingBuf};
 use std::iter;
 use std::fmt;
 use std::fmt::Show;
+use std::ptr;
 
 /// Represents a search path for mutating
 type SearchStack<K, V> = Vec<(*mut Node<K, V>, uint)>;
 
 /// A B-Tree
 pub struct BTreeMap<K, V> {
-    root: Option<Node<K, V>>,
+    root: Node<K, V>,
     length: uint,
     depth: uint,
     b: uint,
@@ -67,208 +68,202 @@ impl<K, V> BTreeMap<K, V> {
     pub fn with_b(b: uint) -> BTreeMap<K, V> {
         BTreeMap {
             length: 0,
-            depth: 0,
-            root: None,
+            depth: 1,
+            root: Node::make_leaf_root(b),
             b: b,
         }
     }
 
     /// Get an iterator over the entries of the map
     fn iter<'a>(&'a self) -> Entries<'a, K, V> {
+        let depth = self.depth;
         let len = self.len();
-        match self.root.as_ref() {
-            None => unreachable!(), //TODO
-            Some(root) => {
-                let is_leaf = root.is_leaf();
-                let mut lca = root.iter();
-                if is_leaf {
-                    // root is a leaf, iterator is just the root's iterator
+        let root = &self.root;
+        let is_leaf = root.is_leaf();
+        let mut lca = root.iter();
+
+        if is_leaf {
+            // root is a leaf, iterator is just the root's iterator
+            Entries {
+                lca: lca,
+                left: RingBuf::new(),
+                right: RingBuf::new(),
+                size: len,
+            }
+        } else {
+            // root is internal, search for the min and max elements in the tree
+            let mut left = RingBuf::with_capacity(depth);
+            let mut right = RingBuf::with_capacity(depth);
+            match (lca.next(), lca.next_back()) {
+                (Some(Edge(mut left_child)), Some(Edge(mut right_child))) => {
+                    // Walk to the smallest element in the tree
+                    loop {
+                        let is_leaf = left_child.is_leaf();
+                        let mut iter = left_child.iter();
+                        if is_leaf {
+                            left.push(iter);
+                            break;
+                        } else {
+                            left_child = match iter.next() {
+                                Some(Edge(next)) => next,
+                                _ => unreachable!(),
+                            };
+                            left.push(iter);
+                        }
+                    }
+                    // Walk to the largest element in the tree
+                    loop {
+                        let is_leaf = right_child.is_leaf();
+                        let mut iter = right_child.iter();
+                        if is_leaf {
+                            right.push(iter);
+                            break;
+                        } else {
+                            right_child = match iter.next_back() {
+                                Some(Edge(next)) => next,
+                                _ => unreachable!(),
+                            };
+                            right.push(iter);
+                        }
+                    }
                     Entries {
                         lca: lca,
-                        left: RingBuf::new(),
-                        right: RingBuf::new(),
+                        left: left,
+                        right: right,
                         size: len,
                     }
-                } else {
-                    // root is internal, search for the min and max elements in the tree
-                    let mut left = RingBuf::new();
-                    let mut right = RingBuf::new();
-                    match (lca.next(), lca.next_back()) {
-                        (Some(Edge(mut left_child)), Some(Edge(mut right_child))) => {
-                            // Walk to the smallest element in the tree
-                            loop {
-                                let is_leaf = left_child.is_leaf();
-                                let mut iter = left_child.iter();
-                                if is_leaf {
-                                    left.push(iter);
-                                    break;
-                                } else {
-                                    left_child = match iter.next() {
-                                        Some(Edge(next)) => next,
-                                        _ => unreachable!(),
-                                    };
-                                    left.push(iter);
-                                }
-                            }
-                            // Walk to the largest element in the tree
-                            loop {
-                                let is_leaf = right_child.is_leaf();
-                                let mut iter = right_child.iter();
-                                if is_leaf {
-                                    right.push(iter);
-                                    break;
-                                } else {
-                                    right_child = match iter.next_back() {
-                                        Some(Edge(next)) => next,
-                                        _ => unreachable!(),
-                                    };
-                                    right.push(iter);
-                                }
-                            }
-                            Entries {
-                                lca: lca,
-                                left: left,
-                                right: right,
-                                size: len,
-                            }
-                        }
-                        _ => unreachable!()
-                    }
                 }
+                _ => unreachable!()
             }
         }
     }
 
     /// Get a mutable iterator over the entries of the map
     pub fn mut_iter<'a>(&'a mut self) -> MutEntries<'a, K, V> {
+        let depth = self.depth;
         let len = self.len();
-        match self.root.as_mut() {
-            None => unreachable!(), //TODO
-            Some(root) => {
-                let is_leaf = root.is_leaf();
-                let mut lca = root.mut_iter();
-                if is_leaf {
-                    // root is a leaf, iterator is just the root's iterator
+        let root = &mut self.root;
+        let is_leaf = root.is_leaf();
+        let mut lca = root.mut_iter();
+
+        if is_leaf {
+            // root is a leaf, iterator is just the root's iterator
+            MutEntries {
+                lca: lca,
+                left: RingBuf::new(),
+                right: RingBuf::new(),
+                size: len,
+            }
+        } else {
+            // root is internal, search for the min and max elements in the tree
+            let mut left = RingBuf::with_capacity(depth);
+            let mut right = RingBuf::with_capacity(depth);
+            match (lca.next(), lca.next_back()) {
+                (Some(Edge(mut temp_left_child)), Some(Edge(mut temp_right_child))) => {
+                    // Walk to the smallest element in the tree
+                    loop {
+                        let left_child = temp_left_child;
+                        let is_leaf = left_child.is_leaf();
+                        let mut iter = left_child.mut_iter();
+                        if is_leaf {
+                            left.push(iter);
+                            break;
+                        } else {
+                            temp_left_child = match iter.next() {
+                                Some(Edge(next)) => next,
+                                _ => unreachable!(),
+                            };
+                            left.push(iter);
+                        }
+                    }
+                    // Walk to the largest element in the tree
+                    loop {
+                        let right_child = temp_right_child;
+                        let is_leaf = right_child.is_leaf();
+                        let mut iter = right_child.mut_iter();
+                        if is_leaf {
+                            right.push(iter);
+                            break;
+                        } else {
+                            temp_right_child = match iter.next_back() {
+                                Some(Edge(next)) => next,
+                                _ => unreachable!(),
+                            };
+                            right.push(iter);
+                        }
+                    }
                     MutEntries {
                         lca: lca,
-                        left: RingBuf::new(),
-                        right: RingBuf::new(),
+                        left: left,
+                        right: right,
                         size: len,
                     }
-                } else {
-                    // root is internal, search for the min and max elements in the tree
-                    let mut left = RingBuf::new();
-                    let mut right = RingBuf::new();
-                    match (lca.next(), lca.next_back()) {
-                        (Some(Edge(mut temp_left_child)), Some(Edge(mut temp_right_child))) => {
-                            // Walk to the smallest element in the tree
-                            loop {
-                                let left_child = temp_left_child;
-                                let is_leaf = left_child.is_leaf();
-                                let mut iter = left_child.mut_iter();
-                                if is_leaf {
-                                    left.push(iter);
-                                    break;
-                                } else {
-                                    temp_left_child = match iter.next() {
-                                        Some(Edge(next)) => next,
-                                        _ => unreachable!(),
-                                    };
-                                    left.push(iter);
-                                }
-                            }
-                            // Walk to the largest element in the tree
-                            loop {
-                                let right_child = temp_right_child;
-                                let is_leaf = right_child.is_leaf();
-                                let mut iter = right_child.mut_iter();
-                                if is_leaf {
-                                    right.push(iter);
-                                    break;
-                                } else {
-                                    temp_right_child = match iter.next_back() {
-                                        Some(Edge(next)) => next,
-                                        _ => unreachable!(),
-                                    };
-                                    right.push(iter);
-                                }
-                            }
-                            MutEntries {
-                                lca: lca,
-                                left: left,
-                                right: right,
-                                size: len,
-                            }
-                        }
-                        _ => unreachable!()
-                    }
                 }
+                _ => unreachable!()
             }
         }
     }
 
     /// Get an iterator for moving the entries out of the map
     pub fn move_iter<'a>(mut self) -> MoveEntries<K, V> {
+        let depth = self.depth;
         let len = self.len();
-        match self.root.take() {
-            None => unreachable!(), //TODO
-            Some(root) => {
-                let is_leaf = root.is_leaf();
-                let mut lca = root.move_iter();
-                if is_leaf {
-                    // root is a leaf, iterator is just the root's iterator
+        let root = self.root;
+        let is_leaf = root.is_leaf();
+        let mut lca = root.move_iter();
+
+        if is_leaf {
+            // root is a leaf, iterator is just the root's iterator
+            MoveEntries {
+                lca: lca,
+                left: RingBuf::new(),
+                right: RingBuf::new(),
+                size: len,
+            }
+        } else {
+            // root is internal, search for the min and max elements in the tree
+            let mut left = RingBuf::with_capacity(depth);
+            let mut right = RingBuf::with_capacity(depth);
+            match (lca.next(), lca.next_back()) {
+                (Some(Edge(mut left_child)), Some(Edge(mut right_child))) => {
+                    // Walk to the smallest element in the tree
+                    loop {
+                        let is_leaf = left_child.is_leaf();
+                        let mut iter = left_child.move_iter();
+                        if is_leaf {
+                            left.push(iter);
+                            break;
+                        } else {
+                            left_child = match iter.next() {
+                                Some(Edge(next)) => next,
+                                _ => unreachable!(),
+                            };
+                            left.push(iter);
+                        }
+                    }
+                    // Walk to the largest element in the tree
+                    loop {
+                        let is_leaf = right_child.is_leaf();
+                        let mut iter = right_child.move_iter();
+                        if is_leaf {
+                            right.push(iter);
+                            break;
+                        } else {
+                            right_child = match iter.next_back() {
+                                Some(Edge(next)) => next,
+                                _ => unreachable!(),
+                            };
+                            right.push(iter);
+                        }
+                    }
                     MoveEntries {
                         lca: lca,
-                        left: RingBuf::new(),
-                        right: RingBuf::new(),
+                        left: left,
+                        right: right,
                         size: len,
                     }
-                } else {
-                    // root is internal, search for the min and max elements in the tree
-                    let mut left = RingBuf::new();
-                    let mut right = RingBuf::new();
-                    match (lca.next(), lca.next_back()) {
-                        (Some(Edge(mut left_child)), Some(Edge(mut right_child))) => {
-                            // Walk to the smallest element in the tree
-                            loop {
-                                let is_leaf = left_child.is_leaf();
-                                let mut iter = left_child.move_iter();
-                                if is_leaf {
-                                    left.push(iter);
-                                    break;
-                                } else {
-                                    left_child = match iter.next() {
-                                        Some(Edge(next)) => next,
-                                        _ => unreachable!(),
-                                    };
-                                    left.push(iter);
-                                }
-                            }
-                            // Walk to the largest element in the tree
-                            loop {
-                                let is_leaf = right_child.is_leaf();
-                                let mut iter = right_child.move_iter();
-                                if is_leaf {
-                                    right.push(iter);
-                                    break;
-                                } else {
-                                    right_child = match iter.next_back() {
-                                        Some(Edge(next)) => next,
-                                        _ => unreachable!(),
-                                    };
-                                    right.push(iter);
-                                }
-                            }
-                            MoveEntries {
-                                lca: lca,
-                                left: left,
-                                right: right,
-                                size: len,
-                            }
-                        }
-                        _ => unreachable!()
-                    }
                 }
+                _ => unreachable!()
             }
         }
     }
@@ -293,20 +288,15 @@ impl<K: Ord, V> Map<K, V> for BTreeMap<K, V> {
     // edge in the node. If we're in a leaf and we don't find our key, then it's not
     // in the tree.
     fn find(&self, key: &K) -> Option<&V> {
-        match self.root.as_ref() {
-            None => None,
-            Some(root) => {
-                let mut cur_node = root;
-                loop {
-                    match cur_node.search(key) {
-                        Found(i) => return cur_node.val(i),
-                        GoDown(i) => match cur_node.edge(i) {
-                            None => return None,
-                            Some(next_node) => {
-                                cur_node = next_node;
-                                continue;
-                            }
-                        }
+        let mut cur_node = &self.root;
+        loop {
+            match cur_node.search(key) {
+                Found(i) => return cur_node.val(i),
+                GoDown(i) => match cur_node.edge(i) {
+                    None => return None,
+                    Some(next_node) => {
+                        cur_node = next_node;
+                        continue;
                     }
                 }
             }
@@ -317,22 +307,17 @@ impl<K: Ord, V> Map<K, V> for BTreeMap<K, V> {
 impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     // See `find` for implementation notes, this is basically a copy-paste with mut's added
     fn find_mut(&mut self, key: &K) -> Option<&mut V> {
-        match self.root.as_mut() {
-            None => None,
-            Some(root) => {
-                // temp_node is a Borrowck hack for having a mutable value outlive a loop iteration
-                let mut temp_node = root;
-                loop {
-                    let cur_node = temp_node;
-                    match cur_node.search(key) {
-                        Found(i) => return cur_node.val_mut(i),
-                        GoDown(i) => match cur_node.edge_mut(i) {
-                            None => return None,
-                            Some(next_node) => {
-                                temp_node = next_node;
-                                continue;
-                            }
-                        }
+        // temp_node is a Borrowck hack for having a mutable value outlive a loop iteration
+        let mut temp_node = &mut self.root;
+        loop {
+            let cur_node = temp_node;
+            match cur_node.search(key) {
+                Found(i) => return cur_node.val_mut(i),
+                GoDown(i) => match cur_node.edge_mut(i) {
+                    None => return None,
+                    Some(next_node) => {
+                        temp_node = next_node;
+                        continue;
                     }
                 }
             }
@@ -366,64 +351,54 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     // the split, we will never do this. Again, this shouldn't effect the analysis.
 
     fn swap(&mut self, mut key: K, mut value: V) -> Option<V> {
-        // FIXME(Gankro): this is gross because of lexical borrows.
-        // If pcwalton's work pans out, this can be made much better!
-        // See `find` for a more idealized structure
-        if self.root.is_none() {
-            self.root = Some(Node::make_leaf_root(self.b, key, value));
-            self.length += 1;
-            self.depth += 1;
-            None
-        } else {
-            let visit_stack = {
-                // We need this temp_node for borrowck wrangling
-                let mut temp_node = self.root.as_mut().unwrap();
-                // visit_stack is a stack of rawptrs to nodes paired with indices, respectively
-                // representing the nodes and edges of our search path. We have to store rawptrs
-                // because as far as Rust is concerned, we can mutate aliased data with such a
-                // stack. It is of course correct, but what it doesn't know is that we will only
-                // be popping and using these ptrs one at a time in `insert_stack`. The alternative
-                // to doing this is to take the Node boxes from their parents. This actually makes
-                // borrowck *really* happy and everything is pretty smooth. However, this creates
-                // *tons* of pointless writes, and requires us to always walk all the way back to
-                // the root after an insertion, even if we only needed to change a leaf. Therefore,
-                // we accept this potential unsafety and complexity in the name of performance.
-                let mut visit_stack = Vec::with_capacity(self.depth);
+        // visit_stack is a stack of rawptrs to nodes paired with indices, respectively
+        // representing the nodes and edges of our search path. We have to store rawptrs
+        // because as far as Rust is concerned, we can mutate aliased data with such a
+        // stack. It is of course correct, but what it doesn't know is that we will only
+        // be popping and using these ptrs one at a time in `insert_stack`. The alternative
+        // to doing this is to take the Node boxes from their parents. This actually makes
+        // borrowck *really* happy and everything is pretty smooth. However, this creates
+        // *tons* of pointless writes, and requires us to always walk all the way back to
+        // the root after an insertion, even if we only needed to change a leaf. Therefore,
+        // we accept this potential unsafety and complexity in the name of performance.
+        let mut visit_stack = Vec::with_capacity(self.depth);
 
-                loop {
-                    let cur_node = temp_node;
-                    let cur_node_ptr = cur_node as *mut _;
+        {
+            // We need this temp_node for borrowck wrangling
+            let mut temp_node = &mut self.root;
 
-                    // See `find` for a description of this search
-                    match cur_node.search(&key) {
-                        Found(i) => unsafe {
-                            // Perfect match, swap the contents and return the old ones
-                            cur_node.unsafe_swap(i, &mut key, &mut value);
-                            return Some(value);
-                        },
-                        GoDown(i) => {
-                            visit_stack.push((cur_node_ptr, i));
-                            match cur_node.edge_mut(i) {
-                                None => {
-                                    // We've found where to insert this key/value pair
-                                    break;
-                                }
-                                Some(next_node) => {
-                                    // We've found the subtree to insert this key/value pair in
-                                    temp_node = next_node;
-                                    continue;
-                                }
+            loop {
+                let cur_node = temp_node;
+                let cur_node_ptr = cur_node as *mut _;
+
+                // See `find` for a description of this search
+                match cur_node.search(&key) {
+                    Found(i) => unsafe {
+                        // Perfect match, swap the contents and return the old ones
+                        cur_node.unsafe_swap(i, &mut key, &mut value);
+                        return Some(value);
+                    },
+                    GoDown(i) => {
+                        visit_stack.push((cur_node_ptr, i));
+                        match cur_node.edge_mut(i) {
+                            None => {
+                                // We've found where to insert this key/value pair
+                                break;
+                            }
+                            Some(next_node) => {
+                                // We've found the subtree to insert this key/value pair in
+                                temp_node = next_node;
+                                continue;
                             }
                         }
                     }
                 }
-                visit_stack
-            };
-
-            // If we get here then we need to insert a new element
-            self.insert_stack(visit_stack, key, value);
-            None
+            }
         }
+
+        // If we get here then we need to insert a new element
+        self.insert_stack(visit_stack, key, value);
+        None
     }
 
     // Deletion is the most complicated operation for a B-Tree.
@@ -462,55 +437,48 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     //      of the root, then we replace the root with the merged node.
 
     fn pop(&mut self, key: &K) -> Option<V> {
-        // See `pop` for a discussion of why this is gross
-        if self.root.is_none() {
-            // We're empty, get lost!
-            None
-        } else {
-            let visit_stack = {
-                // We need this temp_node for borrowck wrangling
-                let mut temp_node = self.root.as_mut().unwrap();
-                // See `pop` for a description of this variable
-                let mut visit_stack = Vec::with_capacity(self.depth);
+        // See `pop` for a discussion of these gross variables
+        let mut visit_stack = Vec::with_capacity(self.depth);
 
-                loop {
-                    let cur_node = temp_node;
-                    let cur_node_ptr = cur_node as *mut _;
+        {
+            let mut temp_node = &mut self.root;
 
-                    // See `find` for a description of this search
-                    match cur_node.search(key) {
-                        Found(i) => {
-                            // Perfect match. Terminate the stack here, and move to the
-                            // next phase (remove_stack).
+            loop {
+                let cur_node = temp_node;
+                let cur_node_ptr = cur_node as *mut _;
+
+                // See `find` for a description of this search
+                match cur_node.search(key) {
+                    Found(i) => {
+                        // Perfect match. Terminate the stack here, and move to the
+                        // next phase (remove_stack).
+                        visit_stack.push((cur_node_ptr, i));
+
+                        if !cur_node.is_leaf() {
+                            // We found the key in an internal node, but that's annoying,
+                            // so let's swap it with a leaf key and pretend we *did* find
+                            // it in a leaf. Note that after calling this, the tree is in
+                            // an inconsistent state, but will be consistent after we
+                            // remove the swapped value in `remove_stack`
+                            leafify_stack(&mut visit_stack);
+                        }
+                        break;
+                    },
+                    GoDown(i) => match cur_node.edge_mut(i) {
+                        None => return None, // We're at a leaf; the key isn't in this tree
+                        Some(next_node) => {
+                            // We've found the subtree the key must be in
                             visit_stack.push((cur_node_ptr, i));
-
-                            if !cur_node.is_leaf() {
-                                // We found the key in an internal node, but that's annoying,
-                                // so let's swap it with a leaf key and pretend we *did* find
-                                // it in a leaf. Note that after calling this, the tree is in
-                                // an inconsistent state, but will be consistent after we
-                                // remove the swapped value in `remove_stack`
-                                leafify_stack(&mut visit_stack);
-                            }
-                            break;
-                        },
-                        GoDown(i) => match cur_node.edge_mut(i) {
-                            None => return None, // We're at a leaf; the key isn't in this tree
-                            Some(next_node) => {
-                                // We've found the subtree the key must be in
-                                visit_stack.push((cur_node_ptr, i));
-                                temp_node = next_node;
-                                continue;
-                            }
+                            temp_node = next_node;
+                            continue;
                         }
                     }
                 }
-                visit_stack
-            };
-
-            // If we get here then we found the key, let's remove it
-            Some(self.remove_stack(visit_stack))
+            }
         }
+
+        // If we get here then we found the key, let's remove it
+        Some(self.remove_stack(visit_stack))
     }
 }
 
@@ -542,8 +510,13 @@ impl<K: Ord, V> BTreeMap<K, V> {
                     // stack to revursively insert the split node into.
                     None => {
                         // The stack was empty; we've split the root, and need to make a new one.
-                        let left = self.root.take().unwrap();
-                        self.root = Some(Node::make_internal_root(self.b, key, val, left, right));
+                        unsafe {
+                            // The unsafe optionless option dance
+                            let root_ptr = &mut self.root as *mut _;
+                            let root = ptr::read(root_ptr as *const _);
+                            ptr::write(root_ptr,
+                                Node::make_internal_root(self.b, key, val, root, right));
+                        }
                         self.depth += 1;
                         return;
                     }
@@ -579,11 +552,11 @@ impl<K: Ord, V> BTreeMap<K, V> {
                 None => {
                     // We've reached the root, so no matter what, we're done. We manually access
                     // the root via the tree itself to avoid creating any dangling pointers.
-                    if self.root.as_ref().unwrap().len() == 0 {
+                    if self.root.len() == 0 && !self.root.is_leaf() {
                         // We've emptied out the root, so make its only child the new root.
                         // If the root is a leaf, this will set the root to `None`
                         self.depth -= 1;
-                        self.root = self.root.take().unwrap().pop_edge();
+                        self.root = self.root.pop_edge().unwrap();
                     }
                     return value;
                 }
@@ -615,9 +588,9 @@ impl<K, V> Mutable for BTreeMap<K, V> {
     fn clear(&mut self) {
         // Note that this will trigger a lot of recursive destructors, but BTreeMaps can't get
         // very deep, so we won't worry about it for now.
-        self.root = None;
+        self.root = Node::make_leaf_root(self.b);
         self.length = 0;
-        self.depth = 0;
+        self.depth = 1;
     }
 }
 
@@ -685,6 +658,17 @@ impl<K: Ord + Show, V: Show> Show for BTreeMap<K, V> {
         }
 
         write!(f, "}}")
+    }
+}
+
+impl<K: Clone, V: Clone> Clone for BTreeMap<K, V> {
+    fn clone(&self) -> BTreeMap<K, V> {
+        BTreeMap {
+            length: self.length,
+            depth: self.depth,
+            root: self.root.clone(),
+            b: self.b,
+        }
     }
 }
 
@@ -1097,15 +1081,27 @@ mod test {
 
     #[test]
     fn test_iter() {
-        let mut map: BTreeMap<uint, uint> = Vec::from_fn(10000, |i| (i, i)).move_iter().collect();
+        let size = 10000u;
+
+        let mut map: BTreeMap<uint, uint> = Vec::from_fn(size, |i| (i, i)).move_iter().collect();
 
         for (i, x) in map.iter().enumerate() {
             assert_eq!(x, (&i, &i));
         }
 
+        for (i, x) in map.iter().rev().enumerate() {
+            assert_eq!(x, (&(size - 1 - i), &(size - i - 1)));
+        }
+
         for (i, x) in map.mut_iter().enumerate() {
             assert_eq!(x, (&i, &mut (i + 0)));
         }
+
+        for (i, x) in map.mut_iter().rev().enumerate() {
+            assert_eq!(x, (&(size - 1 - i), &mut (size - i - 1)));
+        }
+
+        // TODO: move iter
     }
 }
 

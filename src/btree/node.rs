@@ -29,6 +29,27 @@ pub enum SearchResult {
 
 /// A B-Tree Node. We keep keys/edges/values separate to optimize searching for keys.
 pub struct Node<K, V> {
+    // FIXME(Gankro): This representation is super safe and easy to reason about, but painfully
+    // inefficient. As three Vecs, each node consists of *9* words: (ptr, cap, size) * 3. In
+    // theory, if we take full control of allocation like HashMap's RawTable does,
+    // and restrict leaves to max size 256 (not unreasonable for a btree node) we can cut
+    // this down to just (ptr, cap: u8, size: u8, is_leaf: bool). With generic
+    // integer arguments, cap can even move into the the type, reducing this just to
+    // (ptr, cap, size). This could also have cache benefits for very small nodes, as keys
+    // could bleed into edges and vals.
+    //
+    // However doing this would require *a lot* of code to reimplement all
+    // the Vec logic and iterators. It would also use *way* more unsafe code, which sucks and is
+    // hard. For now, we accept this cost in the name of correctness and simplicity.
+    //
+    // As a compromise, keys and vals could be merged into one Vec<(K, V)>, which would shave
+    // off 3 words, but possibly hurt our cache effeciency during search, which only cares about
+    // keys. This would also avoid the Zip we use in our iterator implementations.
+    //
+    // Note that this space waste is especially tragic since we store the Nodes by value in their
+    // parent's edges Vec, so unoccupied spaces in the edges Vec are quite large, and we have
+    // to shift around a lot more bits during insertion/removal.
+
     keys: Vec<K>,
     edges: Vec<Node<K, V>>,
     vals: Vec<V>,
@@ -78,10 +99,8 @@ impl <K, V> Node<K, V> {
     }
 
     /// Make a leaf root from scratch
-    pub fn make_leaf_root(b:uint, key: K, value: V) -> Node<K, V> {
-        let mut node = Node::new_leaf(capacity_from_b(b));
-        node.insert_fit_as_leaf(0, key, value);
-        node
+    pub fn make_leaf_root(b: uint) -> Node<K, V> {
+        Node::new_leaf(capacity_from_b(b))
     }
 
     /// Make an internal root from scratch
@@ -564,5 +583,15 @@ impl<K, V> DoubleEndedIterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversa
             self.elems.next_back().map(|(k, v)| Elem(k, v))
         }
         */
+    }
+}
+
+impl<K: Clone, V: Clone> Clone for Node<K, V> {
+    fn clone(&self) -> Node<K, V> {
+        Node {
+            keys: self.keys.clone(),
+            vals: self.vals.clone(),
+            edges: self.edges.clone(),
+        }
     }
 }

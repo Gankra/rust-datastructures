@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This is pretty much entirely stolen from TreeSet, since BTreeMap has an identical interface
+// This is pretty much entirely stolen from BTreeSet, since BTreeMap has an identical interface
 // to TreeMap
 
 use super::btreemap::*;
@@ -193,6 +193,14 @@ impl<T: Ord + Show> Show for BTreeSet<T> {
     }
 }
 
+impl<T: Clone> Clone for BTreeSet<T> {
+    fn clone(&self) -> BTreeSet<T> {
+        BTreeSet {
+            map: self.map.clone()
+        }
+    }
+}
+
 /// A lazy iterator producing elements in the set difference (in-order).
 pub struct DifferenceItems<'a, T> {
     a: Peekable<&'a T, Items<'a, T>>,
@@ -278,5 +286,171 @@ impl<'a, T: Ord> Iterator<&'a T> for UnionItems<'a, T> {
                 Greater => return self.b.next(),
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::BTreeSet;
+    use std::hash;
+
+    #[test]
+    fn test_clone_eq() {
+      let mut m = BTreeSet::new();
+
+      m.insert(1i);
+      m.insert(2);
+
+      assert!(m.clone() == m);
+    }
+
+    #[test]
+    fn test_hash() {
+      let mut x = BTreeSet::new();
+      let mut y = BTreeSet::new();
+
+      x.insert(1i);
+      x.insert(2);
+      x.insert(3);
+
+      y.insert(3i);
+      y.insert(2);
+      y.insert(1);
+
+      assert!(hash::hash(&x) == hash::hash(&y));
+    }
+
+    fn check(a: &[int],
+             b: &[int],
+             expected: &[int],
+             f: |&BTreeSet<int>, &BTreeSet<int>, f: |&int| -> bool| -> bool) {
+        let mut set_a = BTreeSet::new();
+        let mut set_b = BTreeSet::new();
+
+        for x in a.iter() { assert!(set_a.insert(*x)) }
+        for y in b.iter() { assert!(set_b.insert(*y)) }
+
+        let mut i = 0;
+        f(&set_a, &set_b, |x| {
+            assert_eq!(*x, expected[i]);
+            i += 1;
+            true
+        });
+        assert_eq!(i, expected.len());
+    }
+
+    #[test]
+    fn test_intersection() {
+        fn check_intersection(a: &[int], b: &[int], expected: &[int]) {
+            check(a, b, expected, |x, y, f| x.intersection(y).all(f))
+        }
+
+        check_intersection([], [], []);
+        check_intersection([1, 2, 3], [], []);
+        check_intersection([], [1, 2, 3], []);
+        check_intersection([2], [1, 2, 3], [2]);
+        check_intersection([1, 2, 3], [2], [2]);
+        check_intersection([11, 1, 3, 77, 103, 5, -5],
+                           [2, 11, 77, -9, -42, 5, 3],
+                           [3, 5, 11, 77]);
+    }
+
+    #[test]
+    fn test_difference() {
+        fn check_difference(a: &[int], b: &[int], expected: &[int]) {
+            check(a, b, expected, |x, y, f| x.difference(y).all(f))
+        }
+
+        check_difference([], [], []);
+        check_difference([1, 12], [], [1, 12]);
+        check_difference([], [1, 2, 3, 9], []);
+        check_difference([1, 3, 5, 9, 11],
+                         [3, 9],
+                         [1, 5, 11]);
+        check_difference([-5, 11, 22, 33, 40, 42],
+                         [-12, -5, 14, 23, 34, 38, 39, 50],
+                         [11, 22, 33, 40, 42]);
+    }
+
+    #[test]
+    fn test_symmetric_difference() {
+        fn check_symmetric_difference(a: &[int], b: &[int],
+                                      expected: &[int]) {
+            check(a, b, expected, |x, y, f| x.symmetric_difference(y).all(f))
+        }
+
+        check_symmetric_difference([], [], []);
+        check_symmetric_difference([1, 2, 3], [2], [1, 3]);
+        check_symmetric_difference([2], [1, 2, 3], [1, 3]);
+        check_symmetric_difference([1, 3, 5, 9, 11],
+                                   [-2, 3, 9, 14, 22],
+                                   [-2, 1, 5, 11, 14, 22]);
+    }
+
+    #[test]
+    fn test_union() {
+        fn check_union(a: &[int], b: &[int],
+                                      expected: &[int]) {
+            check(a, b, expected, |x, y, f| x.union(y).all(f))
+        }
+
+        check_union([], [], []);
+        check_union([1, 2, 3], [2], [1, 2, 3]);
+        check_union([2], [1, 2, 3], [1, 2, 3]);
+        check_union([1, 3, 5, 9, 11, 16, 19, 24],
+                    [-2, 1, 5, 9, 13, 19],
+                    [-2, 1, 3, 5, 9, 11, 13, 16, 19, 24]);
+    }
+
+    #[test]
+    fn test_zip() {
+        let mut x = BTreeSet::new();
+        x.insert(5u);
+        x.insert(12u);
+        x.insert(11u);
+
+        let mut y = BTreeSet::new();
+        y.insert("foo");
+        y.insert("bar");
+
+        let x = x;
+        let y = y;
+        let mut z = x.iter().zip(y.iter());
+
+        // FIXME: #5801: this needs a type hint to compile...
+        let result: Option<(&uint, & &'static str)> = z.next();
+        assert_eq!(result.unwrap(), (&5u, &("bar")));
+
+        let result: Option<(&uint, & &'static str)> = z.next();
+        assert_eq!(result.unwrap(), (&11u, &("foo")));
+
+        let result: Option<(&uint, & &'static str)> = z.next();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_from_iter() {
+        let xs = [1i, 2, 3, 4, 5, 6, 7, 8, 9];
+
+        let set: BTreeSet<int> = xs.iter().map(|&x| x).collect();
+
+        for x in xs.iter() {
+            assert!(set.contains(x));
+        }
+    }
+
+    #[test]
+    fn test_show() {
+        let mut set: BTreeSet<int> = BTreeSet::new();
+        let empty: BTreeSet<int> = BTreeSet::new();
+
+        set.insert(1);
+        set.insert(2);
+
+        let set_str = format!("{}", set);
+
+        assert!(set_str == "{1, 2}".to_string());
+        assert_eq!(format!("{}", empty), "{}".to_string());
     }
 }
