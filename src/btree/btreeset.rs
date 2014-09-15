@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This is pretty much entirely stolen from BTreeSet, since BTreeMap has an identical interface
+// This is pretty much entirely stolen from TreeSet, since BTreeMap has an identical interface
 // to TreeMap
 
 use super::btreemap::*;

@@ -44,7 +44,8 @@ pub struct Node<K, V> {
     //
     // As a compromise, keys and vals could be merged into one Vec<(K, V)>, which would shave
     // off 3 words, but possibly hurt our cache effeciency during search, which only cares about
-    // keys. This would also avoid the Zip we use in our iterator implementations.
+    // keys. This would also avoid the Zip we use in our iterator implementations. This is
+    // probably worth investigating.
     //
     // Note that this space waste is especially tragic since we store the Nodes by value in their
     // parent's edges Vec, so unoccupied spaces in the edges Vec are quite large, and we have
