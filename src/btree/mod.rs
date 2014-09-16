@@ -9,5 +9,5 @@
 // except according to those terms.
 
 mod node;
-pub mod btreemap;
-pub mod btreeset;
+pub mod map;
+pub mod set;

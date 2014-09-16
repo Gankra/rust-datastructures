@@ -11,7 +11,7 @@
 // This is pretty much entirely stolen from TreeSet, since BTreeMap has an identical interface
 // to TreeMap
 
-use super::btreemap::*;
+use super::map::*;
 use std::hash::{Writer, Hash};
 use std::default::Default;
 use std::iter;
