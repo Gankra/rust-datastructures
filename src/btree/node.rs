@@ -573,7 +573,7 @@ impl<K, V> Iterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversal<K, V> {
 
 impl<K, V> DoubleEndedIterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversal<K, V> {
     fn next_back(&mut self) -> Option<TraversalItem<K, V, Node<K, V>>> {
-        unreachable!(); //TODO, patch MoveItems ExactSize
+        unreachable!(); //TODO, wait for upstream MoveItems ExactSize patch
         /*
         let tail_is_edge = self.tail_is_edge;
         self.tail_is_edge = !tail_is_edge;

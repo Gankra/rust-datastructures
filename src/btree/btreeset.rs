@@ -202,25 +202,25 @@ impl<T: Clone> Clone for BTreeSet<T> {
 }
 
 /// A lazy iterator producing elements in the set difference (in-order).
-pub struct DifferenceItems<'a, T> {
+pub struct DifferenceItems<'a, T:'a> {
     a: Peekable<&'a T, Items<'a, T>>,
     b: Peekable<&'a T, Items<'a, T>>,
 }
 
 /// A lazy iterator producing elements in the set symmetric difference (in-order).
-pub struct SymDifferenceItems<'a, T> {
+pub struct SymDifferenceItems<'a, T:'a> {
     a: Peekable<&'a T, Items<'a, T>>,
     b: Peekable<&'a T, Items<'a, T>>,
 }
 
 /// A lazy iterator producing elements in the set intersection (in-order).
-pub struct IntersectionItems<'a, T> {
+pub struct IntersectionItems<'a, T:'a> {
     a: Peekable<&'a T, Items<'a, T>>,
     b: Peekable<&'a T, Items<'a, T>>,
 }
 
 /// A lazy iterator producing elements in the set union (in-order).
-pub struct UnionItems<'a, T> {
+pub struct UnionItems<'a, T:'a> {
     a: Peekable<&'a T, Items<'a, T>>,
     b: Peekable<&'a T, Items<'a, T>>,
 }
