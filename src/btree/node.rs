@@ -15,19 +15,26 @@ use std::mem;
 use std::slice;
 use std::iter::Zip;
 use std::vec;
+use std::ptr;
 
 /// Represents the result of an Insertion: either the item fit, or the node had to split
 pub enum InsertionResult<K, V>{
+    /// The inserted element fit
     Fit,
+    /// The inserted element did not fit, so the node was split
     Split(K, V, Node<K, V>),
 }
 
 /// Represents the result of a search for a key in a single node
 pub enum SearchResult {
-    Found(uint), GoDown(uint),
+    /// The element was found at the given index
+    Found(uint),
+    /// The element wasn't found, but if it's anywhere, it must be beyond this edge
+    GoDown(uint),
 }
 
 /// A B-Tree Node. We keep keys/edges/values separate to optimize searching for keys.
+#[deriving(Clone)]
 pub struct Node<K, V> {
     // FIXME(Gankro): This representation is super safe and easy to reason about, but painfully
     // inefficient. As three Vecs, each node consists of *9* words: (ptr, cap, size) * 3. In
@@ -35,10 +42,10 @@ pub struct Node<K, V> {
     // and restrict leaves to max size 256 (not unreasonable for a btree node) we can cut
     // this down to just (ptr, cap: u8, size: u8, is_leaf: bool). With generic
     // integer arguments, cap can even move into the the type, reducing this just to
-    // (ptr, cap, size). This could also have cache benefits for very small nodes, as keys
+    // (ptr, size, is_leaf). This could also have cache benefits for very small nodes, as keys
     // could bleed into edges and vals.
     //
-    // However doing this would require *a lot* of code to reimplement all
+    // However doing this would require a fair amount of code to reimplement all
     // the Vec logic and iterators. It would also use *way* more unsafe code, which sucks and is
     // hard. For now, we accept this cost in the name of correctness and simplicity.
     //
@@ -130,7 +137,7 @@ impl <K, V> Node<K, V> {
         self.edges.is_empty()
     }
 
-    /// if the node has two few elements
+    /// if the node has too few elements
     pub fn is_underfull(&self) -> bool {
         self.len() < min_load_from_capacity(self.capacity())
     }
@@ -143,13 +150,13 @@ impl <K, V> Node<K, V> {
     /// Swap the given key-value pair with the key-value pair stored in the node's index,
     /// without checking bounds.
     pub unsafe fn unsafe_swap(&mut self, index: uint, key: &mut K, val: &mut V) {
-        mem::swap(self.keys.as_mut_slice().unsafe_mut_ref(index), key);
-        mem::swap(self.vals.as_mut_slice().unsafe_mut_ref(index), val);
+        mem::swap(self.keys.as_mut_slice().unsafe_mut(index), key);
+        mem::swap(self.vals.as_mut_slice().unsafe_mut(index), val);
     }
 
     /// Get the node's key mutably without any bounds checks.
     pub unsafe fn unsafe_key_mut(&mut self, index: uint) -> &mut K {
-        self.keys.as_mut_slice().unsafe_mut_ref(index)
+        self.keys.as_mut_slice().unsafe_mut(index)
     }
 
     /// Get the node's value at the given index
@@ -164,7 +171,7 @@ impl <K, V> Node<K, V> {
 
     /// Get the node's value mutably without any bounds checks.
     pub unsafe fn unsafe_val_mut(&mut self, index: uint) -> &mut V {
-        self.vals.as_mut_slice().unsafe_mut_ref(index)
+        self.vals.as_mut_slice().unsafe_mut(index)
     }
 
     /// Get the node's edge at the given index
@@ -179,7 +186,7 @@ impl <K, V> Node<K, V> {
 
     /// Get the node's edge mutably without any bounds checks.
     pub unsafe fn unsafe_edge_mut(&mut self, index: uint) -> &mut Node<K,V> {
-        self.edges.as_mut_slice().unsafe_mut_ref(index)
+        self.edges.as_mut_slice().unsafe_mut(index)
     }
 
     /// Pop an edge off the end of the node
@@ -189,23 +196,29 @@ impl <K, V> Node<K, V> {
 
     /// Try to insert this key-value pair at the given index in this internal node
     /// If the node is full, we have to split it.
-    pub fn insert_as_leaf(&mut self, index: uint, key: K, value: V) -> InsertionResult<K, V> {
+    ///
+    /// Returns a *mut V to the inserted value, because the caller may want this when
+    /// they're done mutating the tree, but we don't want to borrow anything for now.
+    pub fn insert_as_leaf(&mut self, index: uint, key: K, value: V) ->
+            (InsertionResult<K, V>, *mut V) {
         if !self.is_full() {
             // The element can fit, just insert it
             self.insert_fit_as_leaf(index, key, value);
-            Fit
+            (Fit, unsafe { self.unsafe_val_mut(index) as *mut _ })
         } else {
             // The element can't fit, this node is full. Split it into two nodes.
             let (new_key, new_val, mut new_right) = self.split();
             let left_len = self.len();
 
-            if index <= left_len {
+            let ptr = if index <= left_len {
                 self.insert_fit_as_leaf(index, key, value);
+                unsafe { self.unsafe_val_mut(index) as *mut _ }
             } else {
                 new_right.insert_fit_as_leaf(index - left_len - 1, key, value);
-            }
+                unsafe { new_right.unsafe_val_mut(index - left_len - 1) as *mut _ }
+            };
 
-            Split(new_key, new_val, new_right)
+            (Split(new_key, new_val, new_right), ptr)
         }
     }
 
@@ -268,22 +281,22 @@ impl <K, V> Node<K, V> {
         }
     }
 
-    pub fn mut_iter<'a>(&'a mut self) -> MutTraversal<'a, K, V> {
+    pub fn iter_mut<'a>(&'a mut self) -> MutTraversal<'a, K, V> {
         let is_leaf = self.is_leaf();
         MutTraversal {
-            elems: self.keys.as_slice().iter().zip(self.vals.as_mut_slice().mut_iter()),
-            edges: self.edges.as_mut_slice().mut_iter(),
+            elems: self.keys.as_slice().iter().zip(self.vals.as_mut_slice().iter_mut()),
+            edges: self.edges.as_mut_slice().iter_mut(),
             head_is_edge: true,
             tail_is_edge: true,
             has_edges: !is_leaf,
         }
     }
 
-    pub fn move_iter(self) -> MoveTraversal<K, V> {
+    pub fn into_iter(self) -> MoveTraversal<K, V> {
         let is_leaf = self.is_leaf();
         MoveTraversal {
-            elems: self.keys.move_iter().zip(self.vals.move_iter()),
-            edges: self.edges.move_iter(),
+            elems: self.keys.into_iter().zip(self.vals.into_iter()),
+            edges: self.edges.into_iter(),
             head_is_edge: true,
             tail_is_edge: true,
             has_edges: !is_leaf,
@@ -320,13 +333,12 @@ impl<K, V> Node<K, V> {
     /// Node is full, so split it into two nodes, and yield the middle-most key-value pair
     /// because we have one too many, and our parent now has one too few
     fn split(&mut self) -> (K, V, Node<K, V>) {
-        let split_len = split_len_from_capacity(self.capacity());
-        let r_keys = split(&mut self.keys, split_len);
-        let r_vals = split(&mut self.vals, split_len);
+        let r_keys = split(&mut self.keys);
+        let r_vals = split(&mut self.vals);
         let r_edges = if self.edges.is_empty() {
             Vec::new()
         } else {
-            split(&mut self.edges, split_len + 1)
+            split(&mut self.edges)
         };
 
         let right = Node::from_vecs(r_keys, r_vals, r_edges);
@@ -436,21 +448,30 @@ impl<K, V> Node<K, V> {
     fn absorb(&mut self, key: K, val: V, right: Node<K, V>) {
         self.keys.push(key);
         self.vals.push(val);
-        self.keys.extend(right.keys.move_iter());
-        self.vals.extend(right.vals.move_iter());
-        self.edges.extend(right.edges.move_iter());
+        self.keys.extend(right.keys.into_iter());
+        self.vals.extend(right.vals.into_iter());
+        self.edges.extend(right.edges.into_iter());
     }
 }
 
-/// Takes a Vec, and splits the last `amount` elements into a new one
-fn split<T>(left: &mut Vec<T>, amount: uint) -> Vec<T> {
-    // FIXME(Gankro): gross gross gross gross
-    // Vec should probably have a method for this
+/// Takes a Vec, and splits half the elements into a new one.
+fn split<T>(left: &mut Vec<T>) -> Vec<T> {
+    // This function is intended to be called on a full Vec of size 2B - 1 (keys, values),
+    // or 2B (edges). In the former case, left should get B elements, and right should get
+    // B - 1. In the latter case, both should get B. Therefore, we can just always take the last
+    // size / 2 elements from left, and put them on right. This also ensures this method is
+    // safe, even if the Vec isn't full. Just uninteresting for our purposes.
+    let len = left.len();
+    let right_len = len / 2;
+    let left_len = len - right_len;
     let mut right = Vec::with_capacity(left.capacity());
-    for _ in range(0, amount) {
-        right.push(left.pop().unwrap());
+    unsafe {
+        let left_ptr = left.as_slice().unsafe_get(left_len) as *const _;
+        let right_ptr = right.as_mut_slice().as_mut_ptr();
+        ptr::copy_nonoverlapping_memory(right_ptr, left_ptr, right_len);
+        left.set_len(left_len);
+        right.set_len(right_len);
     }
-    right.reverse();
     right
 }
 
@@ -462,13 +483,15 @@ fn capacity_from_b(b: uint) -> uint {
 /// Get the minimum load of a node from its capacity
 fn min_load_from_capacity(cap: uint) -> uint {
     // B - 1
-    (cap + 1) / 2 - 1
+    cap / 2
 }
 
-/// Get the split length of a node from its capacity
-fn split_len_from_capacity(cap: uint) -> uint {
-    // B - 1
-    (cap + 1) / 2 - 1
+struct AbsTraversal<Elems, Edges> {
+    elems: Elems,
+    edges: Edges,
+    head_is_edge: bool,
+    tail_is_edge: bool,
+    has_edges: bool,
 }
 
 pub enum TraversalItem<K, V, E> {
@@ -476,16 +499,19 @@ pub enum TraversalItem<K, V, E> {
     Edge(E),
 }
 
-pub struct Traversal<'a, K, V> {
-    elems: Zip<slice::Items<'a, K>, slice::Items<'a, V>>,
-    edges: slice::Items<'a, Node<K, V>>,
-    head_is_edge: bool,
-    tail_is_edge: bool,
-    has_edges: bool,
-}
+pub type Traversal<'a, K, V> = AbsTraversal<Zip<slice::Items<'a, K>, slice::Items<'a, V>>,
+                                            slice::Items<'a, Node<K, V>>>;
 
-impl<'a, K, V> Iterator<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> for Traversal<'a, K, V> {
-    fn next(&mut self) -> Option<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> {
+pub type MutTraversal<'a, K, V> = AbsTraversal<Zip<slice::Items<'a, K>, slice::MutItems<'a, V>>,
+                                               slice::MutItems<'a, Node<K, V>>>;
+
+pub type MoveTraversal<K, V> = AbsTraversal<Zip<vec::MoveItems<K>, vec::MoveItems<V>>,
+                                                vec::MoveItems<Node<K, V>>>;
+
+
+impl<K, V, E, Elems: Iterator<(K, V)>, Edges: Iterator<E>>
+        Iterator<TraversalItem<K, V, E>> for AbsTraversal<Elems, Edges> {
+    fn next(&mut self) -> Option<TraversalItem<K, V, E>> {
         let head_is_edge = self.head_is_edge;
         self.head_is_edge = !head_is_edge;
 
@@ -497,10 +523,10 @@ impl<'a, K, V> Iterator<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> for Travers
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator<TraversalItem<&'a K, &'a V, &'a Node<K, V>>>
-        for Traversal<'a, K, V> {
+impl<K, V, E, Elems: DoubleEndedIterator<(K, V)>, Edges: DoubleEndedIterator<E>>
+        DoubleEndedIterator<TraversalItem<K, V, E>> for AbsTraversal<Elems, Edges> {
 
-    fn next_back(&mut self) -> Option<TraversalItem<&'a K, &'a V, &'a Node<K, V>>> {
+    fn next_back(&mut self) -> Option<TraversalItem<K, V, E>> {
         let tail_is_edge = self.tail_is_edge;
         self.tail_is_edge = !tail_is_edge;
 
@@ -508,91 +534,6 @@ impl<'a, K, V> DoubleEndedIterator<TraversalItem<&'a K, &'a V, &'a Node<K, V>>>
             self.edges.next_back().map(|node| Edge(node))
         } else {
             self.elems.next_back().map(|(k, v)| Elem(k, v))
-        }
-    }
-}
-
-pub struct MutTraversal<'a, K, V> {
-    elems: Zip<slice::Items<'a, K>, slice::MutItems<'a, V>>,
-    edges: slice::MutItems<'a, Node<K, V>>,
-    head_is_edge: bool,
-    tail_is_edge: bool,
-    has_edges: bool,
-}
-
-impl<'a, K, V> Iterator<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>>
-        for MutTraversal<'a, K, V> {
-
-    fn next(&mut self) -> Option<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>> {
-        let head_is_edge = self.head_is_edge;
-        self.head_is_edge = !head_is_edge;
-
-        if head_is_edge && self.has_edges {
-            self.edges.next().map(|node| Edge(node))
-        } else {
-            self.elems.next().map(|(k, v)| Elem(k, v))
-        }
-    }
-}
-
-impl<'a, K, V> DoubleEndedIterator<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>>
-        for MutTraversal<'a, K, V> {
-
-    fn next_back(&mut self) -> Option<TraversalItem<&'a K, &'a mut V, &'a mut Node<K, V>>> {
-        let tail_is_edge = self.tail_is_edge;
-        self.tail_is_edge = !tail_is_edge;
-
-        if tail_is_edge && self.has_edges {
-            self.edges.next_back().map(|node| Edge(node))
-        } else {
-            self.elems.next_back().map(|(k, v)| Elem(k, v))
-        }
-    }
-}
-
-pub struct MoveTraversal<K, V> {
-    elems: Zip<vec::MoveItems<K>, vec::MoveItems<V>>,
-    edges: vec::MoveItems<Node<K, V>>,
-    head_is_edge: bool,
-    tail_is_edge: bool,
-    has_edges: bool,
-}
-
-impl<K, V> Iterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversal<K, V> {
-    fn next(&mut self) -> Option<TraversalItem<K, V, Node<K, V>>> {
-        let head_is_edge = self.head_is_edge;
-        self.head_is_edge = !head_is_edge;
-
-        if head_is_edge && self.has_edges {
-            self.edges.next().map(|node| Edge(node))
-        } else {
-            self.elems.next().map(|(k, v)| Elem(k, v))
-        }
-    }
-}
-
-impl<K, V> DoubleEndedIterator<TraversalItem<K, V, Node<K, V>>> for MoveTraversal<K, V> {
-    fn next_back(&mut self) -> Option<TraversalItem<K, V, Node<K, V>>> {
-        unreachable!(); //TODO, wait for upstream MoveItems ExactSize patch
-        /*
-        let tail_is_edge = self.tail_is_edge;
-        self.tail_is_edge = !tail_is_edge;
-
-        if tail_is_edge && self.has_edges {
-            self.edges.next_back().map(|node| Edge(node))
-        } else {
-            self.elems.next_back().map(|(k, v)| Elem(k, v))
-        }
-        */
-    }
-}
-
-impl<K: Clone, V: Clone> Clone for Node<K, V> {
-    fn clone(&self) -> Node<K, V> {
-        Node {
-            keys: self.keys.clone(),
-            vals: self.vals.clone(),
-            edges: self.edges.clone(),
         }
     }
 }

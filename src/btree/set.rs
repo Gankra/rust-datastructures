@@ -44,8 +44,8 @@ impl<T: Ord> BTreeSet<T> {
     }
 
     /// Gets an iterator for moving out the Set's contents
-    pub fn move_iter(self) -> MoveItems<T> {
-        self.map.move_iter().map(|(k, _)| k)
+    pub fn into_iter(self) -> MoveItems<T> {
+        self.map.into_iter().map(|(k, _)| k)
     }
 
     /// Visits the values representing the difference, in ascending order.

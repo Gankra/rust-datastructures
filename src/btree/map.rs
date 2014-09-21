@@ -23,6 +23,7 @@ use std::iter;
 use std::fmt;
 use std::fmt::Show;
 use std::ptr;
+use std::mem;
 
 /// Represents a search path for mutating
 type SearchStack<K, V> = Vec<(*mut Node<K, V>, uint)>;
@@ -35,6 +36,7 @@ pub struct BTreeMap<K, V> {
     b: uint,
 }
 
+/// Lazy iterator over a map
 pub struct Entries<'a, K, V> {
     lca: Traversal<'a, K, V>,
     left: RingBuf<Traversal<'a, K, V>>,
@@ -42,6 +44,7 @@ pub struct Entries<'a, K, V> {
     size: uint,
 }
 
+/// Lazy iterator over a map that allows mutation of values
 pub struct MutEntries<'a, K, V> {
     lca: MutTraversal<'a, K, V>,
     left: RingBuf<MutTraversal<'a, K, V>>,
@@ -49,6 +52,7 @@ pub struct MutEntries<'a, K, V> {
     size: uint,
 }
 
+/// Lazy owning iterator over a map
 pub struct MoveEntries<K, V> {
     lca: MoveTraversal<K, V>,
     left: RingBuf<MoveTraversal<K, V>>,
@@ -56,8 +60,28 @@ pub struct MoveEntries<K, V> {
     size: uint,
 }
 
+/// A view into a single entry in a map, which may either be vacant or occupied
+pub enum Entry<'a, K:'a, V:'a> {
+    /// A vacant Entry
+    Vacant(VacantEntry<'a, K, V>),
+    /// An occupied Entry
+    Occupied(OccupiedEntry<'a, K, V>),
+}
 
-impl<K, V> BTreeMap<K, V> {
+/// A vacant Entry
+pub struct VacantEntry<'a, K:'a, V:'a> {
+    key: K,
+    stack: SearchStack<K, V>,
+    tree: &'a mut BTreeMap<K, V>,
+}
+
+/// An occupied Entry
+pub struct OccupiedEntry<'a, K:'a, V:'a> {
+    stack: SearchStack<K, V>,
+    tree: &'a mut BTreeMap<K, V>,
+}
+
+impl<K: Ord, V> BTreeMap<K, V> {
     /// Make a new empty BTreeMap with a reasonable choice for B
     pub fn new() -> BTreeMap<K, V> {
         //FIXME(Gankro): Tune this as a function of size_of<K/V>?
@@ -139,12 +163,12 @@ impl<K, V> BTreeMap<K, V> {
     }
 
     /// Get a mutable iterator over the entries of the map
-    pub fn mut_iter<'a>(&'a mut self) -> MutEntries<'a, K, V> {
+    pub fn iter_mut<'a>(&'a mut self) -> MutEntries<'a, K, V> {
         let depth = self.depth;
         let len = self.len();
         let root = &mut self.root;
         let is_leaf = root.is_leaf();
-        let mut lca = root.mut_iter();
+        let mut lca = root.iter_mut();
 
         if is_leaf {
             // root is a leaf, iterator is just the root's iterator
@@ -164,7 +188,7 @@ impl<K, V> BTreeMap<K, V> {
                     loop {
                         let left_child = temp_left_child;
                         let is_leaf = left_child.is_leaf();
-                        let mut iter = left_child.mut_iter();
+                        let mut iter = left_child.iter_mut();
                         if is_leaf {
                             left.push(iter);
                             break;
@@ -180,7 +204,7 @@ impl<K, V> BTreeMap<K, V> {
                     loop {
                         let right_child = temp_right_child;
                         let is_leaf = right_child.is_leaf();
-                        let mut iter = right_child.mut_iter();
+                        let mut iter = right_child.iter_mut();
                         if is_leaf {
                             right.push(iter);
                             break;
@@ -205,12 +229,12 @@ impl<K, V> BTreeMap<K, V> {
     }
 
     /// Get an iterator for moving the entries out of the map
-    pub fn move_iter<'a>(self) -> MoveEntries<K, V> {
+    pub fn into_iter<'a>(self) -> MoveEntries<K, V> {
         let depth = self.depth;
         let len = self.len();
         let root = self.root;
         let is_leaf = root.is_leaf();
-        let mut lca = root.move_iter();
+        let mut lca = root.into_iter();
 
         if is_leaf {
             // root is a leaf, iterator is just the root's iterator
@@ -229,7 +253,7 @@ impl<K, V> BTreeMap<K, V> {
                     // Walk to the smallest element in the tree
                     loop {
                         let is_leaf = left_child.is_leaf();
-                        let mut iter = left_child.move_iter();
+                        let mut iter = left_child.into_iter();
                         if is_leaf {
                             left.push(iter);
                             break;
@@ -244,7 +268,7 @@ impl<K, V> BTreeMap<K, V> {
                     // Walk to the largest element in the tree
                     loop {
                         let is_leaf = right_child.is_leaf();
-                        let mut iter = right_child.move_iter();
+                        let mut iter = right_child.into_iter();
                         if is_leaf {
                             right.push(iter);
                             break;
@@ -276,6 +300,59 @@ impl<K, V> BTreeMap<K, V> {
     /// Get an iterator over the values of the map
     pub fn values<'a>(&'a self) -> iter::Map<'a, (&'a K, &'a V), &'a V, Entries<'a, K, V>> {
         self.iter().map(|(_, v)| v)
+    }
+
+    /// Get the given key's corresponding entry in the map for in-place manipulation
+    pub fn entry<'a>(&'a mut self, key: K) -> Entry<'a, K, V> {
+        // same basic logic of `swap` and `pop`
+        let mut visit_stack = Vec::with_capacity(self.depth);
+        let mut found = false;
+        {
+            // We need this temp_node for borrowck wrangling
+            let mut temp_node = &mut self.root;
+
+            loop {
+                let cur_node = temp_node;
+                let cur_node_ptr = cur_node as *mut _;
+
+                // See `find` for a description of this search
+                match cur_node.search(&key) {
+                    Found(i) => {
+                        // Perfect match
+                        visit_stack.push((cur_node_ptr, i));
+                        found = true;
+                        break;
+                    },
+                    GoDown(i) => {
+                        visit_stack.push((cur_node_ptr, i));
+                        match cur_node.edge_mut(i) {
+                            None => {
+                                // Not in the tree, but we've found where it goes
+                                break;
+                            }
+                            Some(next_node) => {
+                                // We've found the subtree this key must go in
+                                temp_node = next_node;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if found {
+            Occupied(OccupiedEntry {
+                tree: self,
+                stack: visit_stack
+            })
+        } else {
+            Vacant(VacantEntry {
+                tree: self,
+                stack: visit_stack,
+                key: key,
+            })
+        }
     }
 }
 
@@ -326,11 +403,11 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
 
     // Insertion in a B-Tree is a bit complicated.
     //
-    // First we do the same kind of search described in
-    // `find`. But we need to maintain a stack of all the nodes/edges in our search path.
-    // If we find a match for the key we're trying to insert, just swap the.vals and return the
-    // old ones. However, when we bottom out in a leaf, we attempt to insert our key-value pair
-    // at the same location we would want to follow another edge.
+    // First we do the same kind of search described in `find`. But we need to maintain a stack of
+    // all the nodes/edges in our search path. If we find a match for the key we're trying to
+    // insert, just swap the.vals and return the old ones. However, when we bottom out in a leaf,
+    // we attempt to insert our key-value pair at the same location we would want to follow another
+    // edge.
     //
     // If the node has room, then this is done in the obvious way by shifting elements. However,
     // if the node itself is full, we split node into two, and give its median
@@ -437,7 +514,7 @@ impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     //      of the root, then we replace the root with the merged node.
 
     fn pop(&mut self, key: &K) -> Option<V> {
-        // See `pop` for a discussion of these gross variables
+        // See `swap` for a discussion of these gross variables
         let mut visit_stack = Vec::with_capacity(self.depth);
 
         {
@@ -489,12 +566,14 @@ impl<K: Ord, V> BTreeMap<K, V> {
     ///
     /// Assumes that the stack represents a search path from the root to a leaf, and that the
     /// search path is non-empty
-    fn insert_stack(&mut self, mut stack: SearchStack<K, V>, key: K, val: V) {
+    ///
+    /// An &mut V is returned to the inserted value, for callers that want a reference to this.
+    fn insert_stack(&mut self, mut stack: SearchStack<K, V>, key: K, val: V) -> &mut V {
         self.length += 1;
 
         // Insert the key and value into the leaf at the top of the stack
         let (node, index) = stack.pop().unwrap();
-        let mut insertion = unsafe {
+        let (mut insertion, inserted_ptr) = unsafe {
             (*node).insert_as_leaf(index, key, val)
         };
 
@@ -503,7 +582,7 @@ impl<K: Ord, V> BTreeMap<K, V> {
                 Fit => {
                     // The last insertion went off without a hitch, no splits! We can stop
                     // inserting now.
-                    return;
+                    return unsafe { &mut *inserted_ptr };
                 }
                 Split(key, val, right) => match stack.pop() {
                     // The last insertion triggered a split, so get the next element on the
@@ -518,7 +597,7 @@ impl<K: Ord, V> BTreeMap<K, V> {
                                 Node::make_internal_root(self.b, key, val, root, right));
                         }
                         self.depth += 1;
-                        return;
+                        return unsafe { &mut *inserted_ptr };
                     }
                     Some((node, index)) => {
                         // The stack wasn't empty, do the insertion and recurse
@@ -681,7 +760,8 @@ impl<K: Ord, V> Index<K, V> for BTreeMap<K, V> {
 /// Subroutine for removal. Takes a search stack for a key that terminates at an
 /// internal node, and mutates the tree and search stack to make it a search
 /// stack for that key that terminates at a leaf. This leaves the tree in an inconsistent
-/// state that must be repaired by the caller by removing the key in question.
+/// state that must be repaired by the caller by removing the key in question. Specifically
+/// the key-value pair and its successor will become swapped.
 fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
     let (node_ptr, index) = stack.pop().unwrap();
     unsafe {
@@ -693,6 +773,7 @@ fn leafify_stack<K, V>(stack: &mut SearchStack<K, V>) {
         };
 
         // Go into the right subtree of the found key to find its successor
+        // which always exists because this node is internal
         stack.push((node_ptr, index + 1));
         let mut temp_node = node.unsafe_edge_mut(index + 1);
 
@@ -748,9 +829,7 @@ impl<'a, K, V> Iterator<(&'a K, &'a V)> for Entries<'a, K, V> {
                         }
                     },
                     // The lca yielded an edge, make that the new head of the left path
-                    Some(Edge(next)) => {
-                        Push(next.iter())
-                    },
+                    Some(Edge(next)) => Push(next.iter()),
                     // The lca yielded an entry, so yield that
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -760,14 +839,10 @@ impl<'a, K, V> Iterator<(&'a K, &'a V)> for Entries<'a, K, V> {
                 // The left stack wasn't empty, so continue along the node in its head
                 Some(iter) => match iter.next() {
                     // The head of the left path is empty, so Pop it off and restart the process
-                    None => {
-                        Pop
-                    },
+                    None => Pop,
                     // The head of the left path yielded an edge, so make that the new head
                     // of the left path
-                    Some(Edge(next)) => {
-                        Push(next.iter())
-                    },
+                    Some(Edge(next)) => Push(next.iter()),
                     // The head of the left path yielded entry, so yield that
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -778,12 +853,8 @@ impl<'a, K, V> Iterator<(&'a K, &'a V)> for Entries<'a, K, V> {
 
             // Handle any operation on the left stack as necessary
             match op {
-                Push(item) => {
-                    self.left.push(item);
-                },
-                Pop => {
-                    self.left.pop();
-                }
+                Push(item) => { self.left.push(item); },
+                Pop => { self.left.pop(); },
             }
         }
     }
@@ -806,21 +877,15 @@ impl<'a, K, V> DoubleEndedIterator<(&'a K, &'a V)> for Entries<'a, K, V> {
                             continue;
                         }
                     },
-                    Some(Edge(next)) => {
-                        Push(next.iter())
-                    },
+                    Some(Edge(next)) => Push(next.iter()),
                     Some(Elem(k, v)) => {
                         self.size -= 1;
                         return Some((k, v))
                     }
                 },
                 Some(iter) => match iter.next_back() {
-                    None => {
-                        Pop
-                    },
-                    Some(Edge(next)) => {
-                        Push(next.iter())
-                    },
+                    None => Pop,
+                    Some(Edge(next)) => Push(next.iter()),
                     Some(Elem(k, v)) => {
                         self.size -= 1;
                         return Some((k, v))
@@ -829,12 +894,8 @@ impl<'a, K, V> DoubleEndedIterator<(&'a K, &'a V)> for Entries<'a, K, V> {
             };
 
             match op {
-                Push(item) => {
-                    self.right.push(item);
-                },
-                Pop => {
-                    self.right.pop();
-                }
+                Push(item) => { self.right.push(item); },
+                Pop => { self.right.pop(); }
             }
         }
     }
@@ -855,21 +916,15 @@ impl<'a, K, V> Iterator<(&'a K, &'a mut V)> for MutEntries<'a, K, V> {
                             continue;
                         }
                     },
-                    Some(Edge(next)) => {
-                        Push(next.mut_iter())
-                    },
+                    Some(Edge(next)) => Push(next.iter_mut()),
                     Some(Elem(k, v)) => {
                         self.size -= 1;
                         return Some((k, v))
                     }
                 },
                 Some(iter) => match iter.next() {
-                    None => {
-                        Pop
-                    },
-                    Some(Edge(next)) => {
-                        Push(next.mut_iter())
-                    },
+                    None => Pop,
+                    Some(Edge(next)) => Push(next.iter_mut()),
                     Some(Elem(k, v)) => {
                         self.size -= 1;
                         return Some((k, v))
@@ -907,7 +962,7 @@ impl<'a, K, V> DoubleEndedIterator<(&'a K, &'a mut V)> for MutEntries<'a, K, V> 
                         }
                     },
                     Some(Edge(next)) => {
-                        Push(next.mut_iter())
+                        Push(next.iter_mut())
                     },
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -919,7 +974,7 @@ impl<'a, K, V> DoubleEndedIterator<(&'a K, &'a mut V)> for MutEntries<'a, K, V> 
                         Pop
                     },
                     Some(Edge(next)) => {
-                        Push(next.mut_iter())
+                        Push(next.iter_mut())
                     },
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -956,7 +1011,7 @@ impl<K, V> Iterator<(K, V)> for MoveEntries<K, V> {
                         }
                     },
                     Some(Edge(next)) => {
-                        Push(next.move_iter())
+                        Push(next.into_iter())
                     },
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -968,7 +1023,7 @@ impl<K, V> Iterator<(K, V)> for MoveEntries<K, V> {
                         Pop
                     },
                     Some(Edge(next)) => {
-                        Push(next.move_iter())
+                        Push(next.into_iter())
                     },
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -1007,7 +1062,7 @@ impl<K, V> DoubleEndedIterator<(K, V)> for MoveEntries<K, V> {
                         }
                     },
                     Some(Edge(next)) => {
-                        Push(next.move_iter())
+                        Push(next.into_iter())
                     },
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -1019,7 +1074,7 @@ impl<K, V> DoubleEndedIterator<(K, V)> for MoveEntries<K, V> {
                         Pop
                     },
                     Some(Edge(next)) => {
-                        Push(next.move_iter())
+                        Push(next.into_iter())
                     },
                     Some(Elem(k, v)) => {
                         self.size -= 1;
@@ -1042,12 +1097,65 @@ impl<K, V> DoubleEndedIterator<(K, V)> for MoveEntries<K, V> {
 
 impl<K, V> ExactSize<(K, V)> for MoveEntries<K, V> {}
 
+impl<'a, K: Ord, V> VacantEntry<'a, K, V> {
+    /// Set the value of the entry with the VacantEntry's key, and return a mutable reference to it
+    pub fn set(self, value: V) -> &'a mut V {
+        self.tree.insert_stack(self.stack, self.key, value)
+    }
+}
+
+impl<'a, K: Ord, V> OccupiedEntry<'a, K, V> {
+    /// Get a reference to the value in the entry
+    pub fn get(&self) -> &V {
+        unsafe {
+            let &(node, index) = self.stack.last().unwrap();
+            (*node).val(index).unwrap()
+        }
+    }
+
+    /// Get a mutable reference to the value in the entry
+    pub fn get_mut(&mut self) -> &mut V {
+        unsafe {
+            let &(node, index) = self.stack.last_mut().unwrap();
+            (*node).val_mut(index).unwrap()
+        }
+    }
+
+    pub fn into_mut(mut self) -> &'a mut V {
+        unsafe {
+            let &(node, index) = self.stack.last_mut().unwrap();
+            (*node).val_mut(index).unwrap()
+        }
+    }
+
+    /// Set the value of the entry with the OccupiedEntry's key, and return the entry's old value
+    pub fn set(&mut self, mut value: V) -> V {
+        unsafe {
+            let &(node, index) = self.stack.last().unwrap();
+            mem::swap((*node).unsafe_val_mut(index), &mut value);
+            value
+        }
+    }
+
+    /// Take the value out of the entry, and return it
+    pub fn take(mut self) -> V {
+        unsafe {
+            let &(node, _) = self.stack.last().unwrap();
+            if !(*node).is_leaf() {
+                leafify_stack(&mut self.stack);
+            }
+            self.tree.remove_stack(self.stack)
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod test {
-    use super::BTreeMap;
+    use super::{BTreeMap, Vacant, Occupied};
 
     #[test]
-    fn test_basic() {
+    fn test_basic_large() {
         let mut map = BTreeMap::new();
         let size = 10000u;
         assert_eq!(map.len(), 0);
@@ -1092,164 +1200,147 @@ mod test {
     }
 
     #[test]
+    fn test_basic_small() {
+        let mut map = BTreeMap::new();
+        assert_eq!(map.pop(&1), None);
+        assert_eq!(map.find(&1), None);
+        assert_eq!(map.swap(1u, 1u), None);
+        assert_eq!(map.find(&1), Some(&1));
+        assert_eq!(map.swap(1, 2), Some(1));
+        assert_eq!(map.find(&1), Some(&2));
+        assert_eq!(map.swap(2, 4), None);
+        assert_eq!(map.find(&2), Some(&4));
+        assert_eq!(map.pop(&1), Some(2));
+        assert_eq!(map.pop(&2), Some(4));
+        assert_eq!(map.pop(&1), None);
+    }
+
+    #[test]
     fn test_iter() {
         let size = 10000u;
 
-        let mut map: BTreeMap<uint, uint> = Vec::from_fn(size, |i| (i, i)).move_iter().collect();
+        // Forwards
+        let mut map: BTreeMap<uint, uint> = Vec::from_fn(size, |i| (i, i)).into_iter().collect();
 
-        for (i, x) in map.iter().enumerate() {
-            assert_eq!(x, (&i, &i));
+        {
+            let mut iter = map.iter();
+            for i in range(0, size) {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (&i, &i));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
         }
 
-        for (i, x) in map.iter().rev().enumerate() {
-            assert_eq!(x, (&(size - 1 - i), &(size - i - 1)));
+        {
+            let mut iter = map.iter_mut();
+            for i in range(0, size) {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (&i, &mut (i + 0)));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
         }
 
-        for (i, x) in map.mut_iter().enumerate() {
-            assert_eq!(x, (&i, &mut (i + 0)));
+        {
+            let mut iter = map.into_iter();
+            for i in range(0, size) {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (i, i));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
         }
 
-        for (i, x) in map.mut_iter().rev().enumerate() {
-            assert_eq!(x, (&(size - 1 - i), &mut (size - i - 1)));
+    }
+
+    #[test]
+    fn test_iter_rev() {
+        let size = 10000u;
+
+        // Forwards
+        let mut map: BTreeMap<uint, uint> = Vec::from_fn(size, |i| (i, i)).into_iter().collect();
+
+        {
+            let mut iter = map.iter().rev();
+            for i in range(0, size) {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (&(size - i - 1), &(size - i - 1)));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
         }
 
-        // TODO: move iter
-    }
-}
-
-
-#[cfg(test)]
-mod bench {
-    use test::Bencher;
-    use super::BTreeMap;
-
-    use std::rand;
-    use std::rand::Rng;
-
-    pub fn insert_rand_n<M: MutableMap<uint, uint>>(n: uint,
-                                                    map: &mut M,
-                                                    b: &mut Bencher) {
-        // setup
-        let mut rng = rand::weak_rng();
-
-        map.clear();
-        for _ in range(0, n) {
-            map.insert(rng.gen::<uint>() % n, 1);
+        {
+            let mut iter = map.iter_mut().rev();
+            for i in range(0, size) {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (&(size - i - 1), &mut(size - i - 1)));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
         }
 
-        // measure
-        b.iter(|| {
-            let k = rng.gen::<uint>() % n;
-            map.insert(k, 1);
-            map.remove(&k);
-        })
-    }
-
-    pub fn insert_seq_n<M: MutableMap<uint, uint>>(n: uint,
-                                                   map: &mut M,
-                                                   b: &mut Bencher) {
-        // setup
-        map.clear();
-        for i in range(0u, n) {
-            map.insert(i*2, 1);
+        {
+            let mut iter = map.into_iter().rev();
+            for i in range(0, size) {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (size - i - 1, size - i - 1));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
         }
 
-        // measure
-        let mut i = 1;
-        b.iter(|| {
-            map.insert(i, 1);
-            map.remove(&i);
-            i = (i + 2) % n;
-        })
     }
 
-    pub fn find_rand_n<M:MutableMap<uint,uint>>(n: uint,
-                                                map: &mut M,
-                                                b: &mut Bencher) {
-        // setup
-        let mut rng = rand::weak_rng();
-        let mut keys = Vec::from_fn(n, |_| rng.gen::<uint>() % n);
+    #[test]
+    fn test_entry(){
+        let xs = [(1i, 10i), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)];
 
-        for k in keys.iter() {
-            map.insert(*k, 1);
+        let mut map: BTreeMap<int, int> = xs.iter().map(|&x| x).collect();
+
+        // Existing key (insert)
+        match map.entry(1) {
+            Vacant(_) => unreachable!(),
+            Occupied(mut view) => {
+                assert_eq!(view.get(), &10);
+                assert_eq!(view.set(100), 10);
+            }
         }
+        assert_eq!(map.find(&1).unwrap(), &100);
+        assert_eq!(map.len(), 6);
 
-        rng.shuffle(keys.as_mut_slice());
 
-        // measure
-        let mut i = 0;
-        b.iter(|| {
-            map.find(&keys[i]);
-            i = (i + 1) % n;
-        })
-    }
-
-    pub fn find_seq_n<M:MutableMap<uint,uint>>(n: uint,
-                                               map: &mut M,
-                                               b: &mut Bencher) {
-        // setup
-        for i in range(0u, n) {
-            map.insert(i, 1);
+        // Existing key (update)
+        match map.entry(2) {
+            Vacant(_) => unreachable!(),
+            Occupied(mut view) => {
+                let v = view.get_mut();
+                *v *= 10;
+            }
         }
+        assert_eq!(map.find(&2).unwrap(), &200);
+        assert_eq!(map.len(), 6);
 
-        // measure
-        let mut i = 0;
-        b.iter(|| {
-            let x = map.find(&i);
-            i = (i + 1) % n;
-            x
-        })
-    }
+        // Existing key (take)
+        match map.entry(3) {
+            Vacant(_) => unreachable!(),
+            Occupied(view) => {
+                assert_eq!(view.take(), 30);
+            }
+        }
+        assert_eq!(map.find(&3), None);
+        assert_eq!(map.len(), 5);
 
-    // Find seq
-    #[bench]
-    pub fn insert_rand_100(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        insert_rand_n(100, &mut m, b);
-    }
 
-    #[bench]
-    pub fn insert_rand_10_000(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        insert_rand_n(10_000, &mut m, b);
-    }
-
-    // Insert seq
-    #[bench]
-    pub fn insert_seq_100(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        insert_seq_n(100, &mut m, b);
-    }
-
-    #[bench]
-    pub fn insert_seq_10_000(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        insert_seq_n(10_000, &mut m, b);
-    }
-
-    // Find rand
-    #[bench]
-    pub fn find_rand_100(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        find_rand_n(100, &mut m, b);
-    }
-
-    #[bench]
-    pub fn find_rand_10_000(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        find_rand_n(10_000, &mut m, b);
-    }
-
-    // Find seq
-    #[bench]
-    pub fn find_seq_100(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        find_seq_n(100, &mut m, b);
-    }
-
-    #[bench]
-    pub fn find_seq_10_000(b: &mut Bencher) {
-        let mut m : BTreeMap<uint,uint> = BTreeMap::new();
-        find_seq_n(10_000, &mut m, b);
+        // Inexistent key (insert)
+        match map.entry(10) {
+            Occupied(_) => unreachable!(),
+            Vacant(view) => {
+                assert_eq!(*view.set(1000), 1000);
+            }
+        }
+        assert_eq!(map.find(&10).unwrap(), &1000);
+        assert_eq!(map.len(), 6);
     }
 }
