@@ -24,7 +24,10 @@ pub struct BTreeSet<T>{
     map: BTreeMap<T, ()>,
 }
 
-pub type Items<'a, T> = iter::Map<'a, (&'a T, &'a ()), &'a T, Entries<'a, T, ()>>;
+/// An iterator over a BTreeSet's items
+pub type Items<'a, T> = Keys<'a, T, ()>;
+
+/// An owning iterator over a BTreeSet's items
 pub type MoveItems<T> = iter::Map<'static, (T, ()), T, MoveEntries<T, ()>>;
 
 impl<T: Ord> BTreeSet<T> {

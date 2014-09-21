@@ -486,6 +486,7 @@ fn min_load_from_capacity(cap: uint) -> uint {
     cap / 2
 }
 
+/// An abstraction over all the different kinds of traversals a node supports
 struct AbsTraversal<Elems, Edges> {
     elems: Elems,
     edges: Edges,
@@ -494,23 +495,28 @@ struct AbsTraversal<Elems, Edges> {
     has_edges: bool,
 }
 
+/// A single atomic step in a traversal. Either an element is visited, or an edge is followed
 pub enum TraversalItem<K, V, E> {
     Elem(K, V),
     Edge(E),
 }
 
+/// A traversal over a node's entries and edges
 pub type Traversal<'a, K, V> = AbsTraversal<Zip<slice::Items<'a, K>, slice::Items<'a, V>>,
                                             slice::Items<'a, Node<K, V>>>;
 
+/// A mutable traversal over a node's entries and edges
 pub type MutTraversal<'a, K, V> = AbsTraversal<Zip<slice::Items<'a, K>, slice::MutItems<'a, V>>,
                                                slice::MutItems<'a, Node<K, V>>>;
 
+/// An owning traversal over a node's entries and edges
 pub type MoveTraversal<K, V> = AbsTraversal<Zip<vec::MoveItems<K>, vec::MoveItems<V>>,
                                                 vec::MoveItems<Node<K, V>>>;
 
 
 impl<K, V, E, Elems: Iterator<(K, V)>, Edges: Iterator<E>>
         Iterator<TraversalItem<K, V, E>> for AbsTraversal<Elems, Edges> {
+
     fn next(&mut self) -> Option<TraversalItem<K, V, E>> {
         let head_is_edge = self.head_is_edge;
         self.head_is_edge = !head_is_edge;
